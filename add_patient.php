@@ -1,4 +1,5 @@
 <?php
+ob_start();
 // add_patient.php
 session_start();
 require_once 'includes/db_connect.php';
