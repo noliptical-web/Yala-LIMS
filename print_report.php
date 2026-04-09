@@ -1,153 +1,241 @@
 <?php
-// print_report.php
-
-// 1. FIX: DEFINE THE FONT PATH EXPLICITLY
 define('FPDF_FONTPATH','fpdf/font/');
-
 require('fpdf/fpdf.php');
 require_once 'includes/db_connect.php';
 
-// Check if a Request ID is provided
-if (!isset($_GET['id'])) {
-    die("Error: No Request ID specified.");
+if (!isset($_GET['id'])) { die("Error: No Request ID specified."); }
+$request_id = intval($_GET['id']);
+
+// Check each column individually using information_schema (most reliable method)
+function has_col($conn, $table, $col) {
+    $r = $conn->query("SELECT COUNT(*) as n FROM information_schema.COLUMNS
+                       WHERE TABLE_SCHEMA=DATABASE()
+                       AND TABLE_NAME='$table' AND COLUMN_NAME='$col'");
+    return $r && $r->fetch_assoc()['n'] > 0;
 }
 
-$request_id = $_GET['id'];
+$p_has_provider  = has_col($conn, 'patients', 'insurance_provider');
+$p_has_member    = has_col($conn, 'patients', 'insurance_member_no');
+$py_has_method   = has_col($conn, 'payments',  'payment_method');
+$py_has_provider = has_col($conn, 'payments',  'insurance_provider');
+$py_has_claim    = has_col($conn, 'payments',  'insurance_claim_no');
 
-// 1. FETCH PATIENT & REQUEST DETAILS
-$sql_patient = "SELECT p.full_name, p.opd_number, p.age, p.gender, r.request_date, r.requested_by
+// Build patient query — only reference columns that actually exist
+$sel_provider = $p_has_provider ? 'p.insurance_provider'  : "'' ";
+$sel_member   = $p_has_member   ? 'p.insurance_member_no' : "'' ";
+
+$patient_sql = "SELECT p.full_name, p.opd_number, p.age, p.gender,
+                       $sel_provider AS insurance_provider,
+                       $sel_member   AS insurance_member_no,
+                       r.request_date, r.requested_by, r.payment_status
                 FROM lab_requests r
                 JOIN patients p ON r.patient_id = p.patient_id
-                WHERE r.request_id = $request_id";
-$patient_res = $conn->query($sql_patient);
-if ($patient_res->num_rows == 0) { die("Record not found."); }
-$patient = $patient_res->fetch_assoc();
+                WHERE r.request_id = ?";
 
-// 2. FETCH TEST RESULTS
-$sql_tests = "SELECT t.test_name, tr.result_value, t.units, t.normal_range, tr.technician_remarks
-              FROM test_results tr
-              JOIN lab_tests t ON tr.test_id = t.test_id
-              WHERE tr.request_id = $request_id";
-$tests_res = $conn->query($sql_tests);
+$stmt = $conn->prepare($patient_sql);
+if (!$stmt) { die("DB Error: " . $conn->error); }
+$stmt->bind_param("i", $request_id);
+$stmt->execute();
+$patient = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+if (!$patient) { die("Record not found for Request ID: $request_id"); }
 
-// --- START PDF GENERATION ---
+// Build payment query — only reference columns that actually exist
+$sel_pm       = $py_has_method   ? 'payment_method'    : "'M-Pesa'";
+$sel_py_prov  = $py_has_provider ? 'insurance_provider': "''     ";
+$sel_py_claim = $py_has_claim    ? 'insurance_claim_no': "''     ";
+
+$pay_sql = "SELECT $sel_pm AS payment_method,
+                   $sel_py_prov  AS insurance_provider,
+                   $sel_py_claim AS insurance_claim_no
+            FROM payments WHERE request_id = ? LIMIT 1";
+
+$payment = null;
+$ps = $conn->prepare($pay_sql);
+if ($ps) {
+    $ps->bind_param("i", $request_id);
+    $ps->execute();
+    $payment = $ps->get_result()->fetch_assoc();
+    $ps->close();
+}
+
+// Test results
+$s2 = $conn->prepare(
+    "SELECT t.test_name, tr.result_value, t.units, t.normal_range, tr.technician_remarks
+     FROM test_results tr
+     JOIN lab_tests t ON tr.test_id = t.test_id
+     WHERE tr.request_id = ?
+     ORDER BY t.test_category, t.test_name"
+);
+if (!$s2) { die("DB Error: " . $conn->error); }
+$s2->bind_param("i", $request_id);
+$s2->execute();
+$tests = $s2->get_result();
+$s2->close();
 
 class PDF extends FPDF {
-    // Page Header
     function Header() {
-        // --- FIX: ADD LOGO IF IT EXISTS ---
-        // Ensure you have a file named 'logo.png' in your yala_lims folder
-        if(file_exists('logo.png')) {
-            $this->Image('logo.png', 10, 10, 25); 
-        }
-
-        // --- FIX: BETTER HEADER STYLING ---
-        $this->SetFont('Arial', 'B', 18);
-        $this->SetTextColor(33, 37, 41); // Dark Gray
-        // Move to the right to avoid overlapping the logo
-        $this->Cell(30); 
-        $this->Cell(0, 10, 'YALA SUB-COUNTY HOSPITAL', 0, 1, 'C');
-        
-        $this->SetFont('Arial', 'B', 12);
+        if (file_exists('logo.png')) $this->Image('logo.png', 10, 10, 25);
+        $this->SetFont('Arial','B',16);
+        $this->SetTextColor(15, 23, 42);
         $this->Cell(30);
-        $this->Cell(0, 7, 'DEPARTMENT OF LABORATORY SERVICES', 0, 1, 'C');
-        
-        $this->SetFont('Arial', '', 10);
-        $this->SetTextColor(100, 100, 100); // Light Gray
+        $this->Cell(0, 8, 'YALA SUB-COUNTY HOSPITAL', 0, 1, 'C');
+        $this->SetFont('Arial','B',11);
         $this->Cell(30);
-        $this->Cell(0, 5, 'P.O. Box 45 - 40610, Yala | Tel: 0700-000-000', 0, 1, 'C');
-        
-        $this->Ln(15);
-        $this->SetDrawColor(0, 0, 0);
-        $this->Line(10, 42, 200, 42); // Horizontal line
+        $this->Cell(0, 6, 'DEPARTMENT OF LABORATORY SERVICES', 0, 1, 'C');
+        $this->SetFont('Arial','',9);
+        $this->SetTextColor(100, 116, 139);
+        $this->Cell(30);
+        $this->Cell(0, 5, 'P.O. Box 45-40610, Yala  |  Siaya County, Kenya', 0, 1, 'C');
+        $this->Ln(10);
+        $this->SetDrawColor(226, 232, 240);
+        $this->Line(10, 44, 200, 44);
         $this->Ln(5);
     }
-
-    // Page Footer
     function Footer() {
-        $this->SetY(-15);
+        $this->SetY(-14);
         $this->SetFont('Arial','I',8);
-        $this->SetTextColor(128); // Grey
-        $this->Cell(0,10,'Page '.$this->PageNo().' | Generated by Yala LIMS System',0,0,'C');
+        $this->SetTextColor(148, 163, 184);
+        $this->Cell(0, 5, 'Page '.$this->PageNo().' | Generated by Yala LIMS | '.date('d M Y H:i'), 0, 0, 'C');
     }
 }
 
 $pdf = new PDF();
 $pdf->AddPage();
 
-// SECTION A: PATIENT DETAILS
-$pdf->SetTextColor(0, 0, 0); // Reset to black
-$pdf->SetFont('Arial','B',12);
-$pdf->Cell(0, 10, 'PATIENT LABORATORY REPORT', 0, 1, 'L');
+// TITLE
+$pdf->SetTextColor(15, 23, 42);
+$pdf->SetFont('Arial','B',11);
+$pdf->Cell(0, 8, 'PATIENT LABORATORY REPORT', 0, 1, 'L');
 
-$pdf->SetFont('Arial','',10);
-// Row 1
-$pdf->Cell(40, 7, 'Patient Name:', 0, 0);
-$pdf->Cell(60, 7, $patient['full_name'], 0, 0);
-$pdf->Cell(40, 7, 'Date:', 0, 0);
-$pdf->Cell(50, 7, date('d-M-Y H:i', strtotime($patient['request_date'])), 0, 1);
-
-// Row 2
-$pdf->Cell(40, 7, 'OPD Number:', 0, 0);
-$pdf->Cell(60, 7, $patient['opd_number'], 0, 0);
-$pdf->Cell(40, 7, 'Age/Gender:', 0, 0);
-$pdf->Cell(50, 7, $patient['age'] . ' Yrs / ' . $patient['gender'], 0, 1);
-
-// Row 3
-$pdf->Cell(40, 7, 'Requested By:', 0, 0);
-$pdf->Cell(60, 7, 'Dr. ' . $patient['requested_by'], 0, 1);
-
-$pdf->Ln(5); // Spacer
-
-// SECTION B: TEST RESULTS TABLE
-$pdf->SetFont('Arial','B',10);
-$pdf->SetFillColor(200, 220, 255); // Light Blue Header
-
-// Table Header
-$pdf->Cell(60, 8, 'Test Name', 1, 0, 'L', true);
-$pdf->Cell(40, 8, 'Result', 1, 0, 'C', true);
-$pdf->Cell(40, 8, 'Units / Ref', 1, 0, 'C', true);
-$pdf->Cell(50, 8, 'Remarks', 1, 1, 'L', true);
-
-// Table Rows
-$pdf->SetFont('Arial','',10);
-
-while($row = $tests_res->fetch_assoc()) {
-    $pdf->Cell(60, 8, $row['test_name'], 1, 0);
-    
-    // --- FIX: SMART COLOR LOGIC START ---
-    // Check for "Positive" or "High" in the result text
-    $is_abnormal = false;
-    // 'stripos' searches for text regardless of capital/small letters
-    if (stripos($row['result_value'], 'Pos') !== false || stripos($row['result_value'], 'High') !== false) {
-        $is_abnormal = true;
-    }
-
-    if ($is_abnormal) {
-        $pdf->SetTextColor(255, 0, 0); // RED
-        $pdf->SetFont('Arial', 'B', 10); // BOLD
-    } else {
-        $pdf->SetTextColor(0, 0, 0); // BLACK
-        $pdf->SetFont('Arial', '', 10);
-    }
-    // --- SMART LOGIC END ---
-
-    $pdf->Cell(40, 8, $row['result_value'], 1, 0, 'C');
-    
-    // Reset colors for the next columns
-    $pdf->SetTextColor(0, 0, 0); 
-    $pdf->SetFont('Arial', '', 10);
-    
-    $pdf->Cell(40, 8, $row['units'] . ' ' . $row['normal_range'], 1, 0, 'C');
-    $pdf->Cell(50, 8, $row['technician_remarks'], 1, 1, 'L');
+// Patient details
+$pdf->SetFont('Arial','',9);
+function prow($pdf, $lbl, $val, $nl = false) {
+    $pdf->SetFont('Arial','',9);
+    $pdf->SetTextColor(100, 116, 139);
+    $pdf->Cell(38, 7, $lbl, 0, 0);
+    $pdf->SetTextColor(15, 23, 42);
+    $pdf->Cell(55, 7, $val, 0, $nl ? 1 : 0);
 }
 
-$pdf->Ln(15);
+prow($pdf, 'Patient Name:',  $patient['full_name']);
+prow($pdf, 'Report Date:',   date('d-M-Y H:i', strtotime($patient['request_date'])), true);
+prow($pdf, 'OPD Number:',    $patient['opd_number']);
+prow($pdf, 'Age / Gender:',  $patient['age'].' Yrs / '.$patient['gender'], true);
+prow($pdf, 'Requested By:',  'Dr. '.$patient['requested_by'], true);
 
-// SECTION C: SIGNATURES
+// Insurance / payment line
+$ins_prov  = $patient['insurance_provider'] ?? '';
+$ins_memb  = $patient['insurance_member_no'] ?? '';
+$pay_meth  = $payment['payment_method']    ?? '';
+$pay_prov  = $payment['insurance_provider'] ?? '';
+$pay_claim = $payment['insurance_claim_no'] ?? '';
+
+if ($pay_meth === 'Insurance' && $pay_prov) {
+    prow($pdf, 'Insurance:', $pay_prov.($pay_claim ? ' — Claim: '.$pay_claim : ''), true);
+} elseif ($ins_prov) {
+    prow($pdf, 'Insurance:', $ins_prov.($ins_memb ? ' ('.$ins_memb.')' : ''), true);
+} else {
+    $pdf->Ln(0);
+}
+
+// Payment status
+$pdf->Ln(3);
+$pdf->SetFont('Arial','B',9);
+$pstatus = $patient['payment_status'] ?? 'Unpaid';
+if ($pstatus === 'Paid' && $pay_meth === 'Insurance') {
+    $pdf->SetTextColor(124, 58, 237);
+    $pdf->Cell(0, 5, chr(164).' INSURANCE CLAIM SUBMITTED', 0, 1, 'L');
+} elseif ($pstatus === 'Paid' && $pay_meth === 'Waiver') {
+    $pdf->SetTextColor(217, 119, 6);
+    $pdf->Cell(0, 5, chr(164).' FEE WAIVED', 0, 1, 'L');
+} elseif ($pstatus === 'Paid') {
+    $pdf->SetTextColor(22, 163, 74);
+    $pdf->Cell(0, 5, chr(164).' PAYMENT CLEARED', 0, 1, 'L');
+} else {
+    $pdf->SetTextColor(220, 38, 38);
+    $pdf->Cell(0, 5, '! PAYMENT PENDING', 0, 1, 'L');
+}
+
+$pdf->Ln(3);
+$pdf->SetDrawColor(226, 232, 240);
+$pdf->Line(10, $pdf->GetY(), 200, $pdf->GetY());
+$pdf->Ln(4);
+
+// RESULTS TABLE HEADER
+$pdf->SetTextColor(15, 23, 42);
+$pdf->SetFont('Arial','B',10);
+$pdf->Cell(0, 7, 'TEST RESULTS', 0, 1, 'L');
+$pdf->Ln(1);
+
+$pdf->SetFillColor(241, 245, 249);
+$pdf->SetFont('Arial','B',9);
+$pdf->SetTextColor(100, 116, 139);
+$pdf->Cell(62, 7, 'Test Name',      1, 0, 'L', true);
+$pdf->Cell(35, 7, 'Result',         1, 0, 'C', true);
+$pdf->Cell(40, 7, 'Reference Range',1, 0, 'C', true);
+$pdf->Cell(53, 7, 'Remarks',        1, 1, 'L', true);
+
+// RESULTS ROWS
+$has_abnormal = false;
+while ($row = $tests->fetch_assoc()) {
+    $val    = $row['result_value'];
+    $isPend = ($val === 'Pending');
+    $isAbn  = !$isPend && (
+        stripos($val,'pos')   !== false ||
+        stripos($val,'high')  !== false ||
+        stripos($val,'elev')  !== false ||
+        stripos($val,'abnorm')!== false
+    );
+    if ($isAbn) $has_abnormal = true;
+
+    $label = $row['test_name'].($row['units'] ? ' ('.$row['units'].')' : '');
+
+    $pdf->SetTextColor(15, 23, 42);
+    $pdf->SetFont('Arial','',9);
+    $pdf->Cell(62, 7, $label, 1, 0, 'L');
+
+    if ($isPend)     { $pdf->SetTextColor(148,163,184); $pdf->SetFont('Arial','I',9); }
+    elseif ($isAbn)  { $pdf->SetTextColor(220,38,38);   $pdf->SetFont('Arial','B',9); }
+    else             { $pdf->SetTextColor(22,163,74);    $pdf->SetFont('Arial','B',9); }
+
+    $pdf->Cell(35, 7, $val, 1, 0, 'C');
+
+    $pdf->SetTextColor(100, 116, 139);
+    $pdf->SetFont('Arial','',9);
+    $pdf->Cell(40, 7, $row['normal_range'] ?: chr(151), 1, 0, 'C');
+    $pdf->Cell(53, 7, $row['technician_remarks'] ?: chr(151), 1, 1, 'L');
+}
+
+// NOTES
+$pdf->Ln(3);
+$pdf->SetFont('Arial','I',8);
+$pdf->SetTextColor(100, 116, 139);
+$pdf->Cell(0, 4, 'Normal values shown in green  |  Abnormal values shown in red  |  Pending = result not yet entered', 0, 1, 'L');
+
+if ($has_abnormal) {
+    $pdf->Ln(2);
+    $pdf->SetFont('Arial','B',9);
+    $pdf->SetTextColor(220, 38, 38);
+    $pdf->Cell(0, 5, '* One or more results are outside the normal reference range. Please consult your doctor.', 0, 1, 'L');
+}
+
+if ($pay_meth === 'Insurance' && $pay_prov) {
+    $pdf->Ln(2);
+    $pdf->SetFont('Arial','I',8);
+    $pdf->SetTextColor(124, 58, 237);
+    $pdf->Cell(0, 4, '* Processed under insurance: '.$pay_prov.($pay_claim ? '  Claim: '.$pay_claim : ''), 0, 1, 'L');
+}
+
+// SIGNATURES
+$pdf->Ln(14);
+$pdf->SetTextColor(15, 23, 42);
 $pdf->SetFont('Arial','',10);
-$pdf->Cell(100, 5, '................................................', 0, 1);
-$pdf->Cell(100, 5, 'Lab Technologist Signature', 0, 1);
+$pdf->Cell(95, 5, '........................................', 0, 0, 'L');
+$pdf->Cell(0,  5, '........................................', 0, 1, 'R');
+$pdf->SetFont('Arial','',9);
+$pdf->SetTextColor(100, 116, 139);
+$pdf->Cell(95, 5, 'Lab Technologist Signature', 0, 0, 'L');
+$pdf->Cell(0,  5, 'Authorising Doctor Signature', 0, 1, 'R');
 
-$pdf->Output(); // Send PDF to browser
-?>
+$pdf->Output();

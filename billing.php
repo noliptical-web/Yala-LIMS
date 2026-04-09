@@ -1,212 +1,495 @@
 <?php
-// billing.php
 session_start();
 require_once 'includes/db_connect.php';
+require_once 'includes/csrf.php';
+require_once 'includes/audit.php';
 
-// Access Control
-if (!isset($_SESSION['loggedin']) || ($_SESSION['role'] != 'Receptionist' && $_SESSION['role'] != 'Admin')) {
-    header("location: dashboard.php");
-    exit;
+$allowed = ['Receptionist', 'Admin'];
+if (!isset($_SESSION['loggedin']) || !in_array($_SESSION['role'], $allowed)) {
+    header("location: dashboard.php"); exit;
 }
 
-$success = "";
-$error = "";
+$myId    = intval($_SESSION['id'] ?? 0);
+$success = $error = "";
 
-// A. HANDLE PAYMENT VERIFICATION
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['verify_payment'])) {
-    $req_id     = intval($_POST['request_id']);
-    $mpesa_code = strtoupper(trim($_POST['mpesa_code']));
-    $amount     = floatval($_POST['amount']);
+// ── Detect which optional columns exist ──────────────────────────────────────
+function bil_col($conn, $col) {
+    $r = $conn->query("SELECT COUNT(*) as n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='payments' AND COLUMN_NAME='$col'");
+    return $r && $r->fetch_assoc()['n'] > 0;
+}
+$has_payment_type  = bil_col($conn, 'payment_type');
+$has_reference_no  = bil_col($conn, 'reference_no');
+$has_insurer_name  = bil_col($conn, 'insurer_name');
+$has_claim_ref     = bil_col($conn, 'claim_ref');
+$has_patient_copay = bil_col($conn, 'patient_copay');
+$has_waiver_reason = bil_col($conn, 'waiver_reason');
+$has_received_by   = bil_col($conn, 'received_by');
 
-    if (strlen($mpesa_code) >= 10) {
-        $sql  = "INSERT INTO payments (request_id, amount_paid, payment_method, reference_no) VALUES (?, ?, 'eCitizen-222222', ?)";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ids", $req_id, $amount, $mpesa_code);
+// ── RECORD PAYMENT ────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['record_payment'])) {
+    csrf_verify();
 
-        if ($stmt->execute()) {
-            $upd = $conn->prepare("UPDATE lab_requests SET payment_status = 'Paid' WHERE request_id = ?");
-            $upd->bind_param("i", $req_id);
-            $upd->execute();
-            $upd->close();
-            $success = "Payment Verified! <a href='print_receipt.php?id=$req_id' target='_blank' class='btn btn-sm btn-dark ms-2'>Print Receipt</a>";
-        } else {
-            $error = "Database error recording payment.";
-        }
-        $stmt->close();
+    $paymentId     = intval($_POST['payment_id']    ?? 0);
+    $requestId     = intval($_POST['request_id']    ?? 0);
+    $method        = trim($_POST['payment_method']  ?? '');
+    $mpesaCode     = trim($_POST['mpesa_code']      ?? '');
+    $cashRef       = trim($_POST['cash_ref']        ?? '');
+    $insurerName   = trim($_POST['insurer_name']    ?? '');
+    $memberNo      = trim($_POST['insurance_member_no'] ?? '');
+    $claimRef      = trim($_POST['claim_ref']       ?? '');
+    $copay         = floatval($_POST['copay_amount'] ?? 0);
+    $amountPaid    = floatval($_POST['amount_paid']  ?? 0);
+    $waiverReason  = trim($_POST['waiver_reason']   ?? '');
+    $waiverOfficer = trim($_POST['waiver_officer']  ?? '');
+    $receivedBy    = $_SESSION['full_name'] ?? 'Cashier';
+
+    if (!$paymentId || !$method) {
+        $error = "Missing payment ID or method.";
     } else {
-        $error = "Invalid M-Pesa Code format. Must be at least 10 characters.";
+
+        // ── Build UPDATE payments ─────────────────────────────────────────────
+        $setParts = ["payment_status = 'Paid'", "payment_date = NOW()", "amount_paid = ?"];
+        $types    = "d";
+        $vals     = [$amountPaid];
+
+        if ($has_payment_type) {
+            $setParts[] = "payment_type = ?";   $types .= "s"; $vals[] = $method;
+        }
+        if ($method === 'mpesa' && $has_reference_no) {
+            $setParts[] = "reference_no = ?";   $types .= "s"; $vals[] = $mpesaCode;
+        }
+        if ($method === 'cash' && $has_reference_no) {
+            $setParts[] = "reference_no = ?";   $types .= "s"; $vals[] = $cashRef;
+        }
+        if ($method === 'insurance') {
+            if ($has_insurer_name)  { $setParts[] = "insurer_name = ?";  $types .= "s"; $vals[] = $insurerName; }
+            if ($has_claim_ref)     { $setParts[] = "claim_ref = ?";     $types .= "s"; $vals[] = $claimRef; }
+            if ($has_patient_copay) { $setParts[] = "patient_copay = ?"; $types .= "d"; $vals[] = $copay; }
+        }
+        if ($method === 'waiver') {
+            if ($has_waiver_reason) { $setParts[] = "waiver_reason = ?"; $types .= "s"; $vals[] = $waiverReason; }
+            // Waiver counts as amount_paid = 0
+            $vals[0] = 0;
+        }
+        if ($has_received_by) {
+            $setParts[] = "received_by = ?";    $types .= "s"; $vals[] = $receivedBy;
+        }
+
+        $types .= "i"; $vals[] = $paymentId;
+        $sql  = "UPDATE payments SET " . implode(", ", $setParts) . " WHERE payment_id = ?";
+        $stmt = $conn->prepare($sql);
+
+        if (!$stmt) {
+            $error = "Query error: " . $conn->error;
+        } else {
+            $stmt->bind_param($types, ...$vals);
+            if ($stmt->execute()) {
+                // ── CRITICAL: also update lab_requests.payment_status ─────────
+                // This unlocks the lab tech to enter results
+                if ($requestId > 0) {
+                    $conn->query("UPDATE lab_requests SET payment_status = 'Paid' WHERE request_id = $requestId");
+                }
+                audit_log($conn, 'record_payment', 'payments', $paymentId, "Payment ID $paymentId via $method");
+                $success = "Payment recorded successfully.";
+            } else {
+                $error = "Save failed: " . $conn->error;
+            }
+            $stmt->close();
+        }
     }
 }
 
-// B. FETCH UNPAID BILLS
-// COALESCE prevents NULL when test_results have no matching lab_tests rows
-$sql_bills = "SELECT r.request_id, p.full_name, p.opd_number, r.request_date,
-              COALESCE(
-                  (SELECT SUM(lt.cost)
-                   FROM test_results tr
-                   JOIN lab_tests lt ON tr.test_id = lt.test_id
-                   WHERE tr.request_id = r.request_id
-                  ), 0
-              ) as total_bill
-              FROM lab_requests r
-              JOIN patients p ON r.patient_id = p.patient_id
-              WHERE r.payment_status = 'Unpaid'
-              ORDER BY r.request_date ASC";
+// ── FETCH PENDING BILLS ───────────────────────────────────────────────────────
+// Uses lab_requests (the ACTUAL table), not test_requests
+// Also pulls insurance_provider from patients if the column exists
+$has_ins_provider = false;
+$r = $conn->query("SELECT COUNT(*) as n FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='patients' AND COLUMN_NAME='insurance_provider'");
+if ($r && $r->fetch_assoc()['n'] > 0) $has_ins_provider = true;
 
-$bills = $conn->query($sql_bills);
+$ins_col = $has_ins_provider ? "pt.insurance_provider" : "'' AS insurance_provider";
 
-// Fetch into array so we can check count cleanly
-$bill_rows = [];
-if ($bills) {
-    while ($b = $bills->fetch_assoc()) {
-        $bill_rows[] = $b;
+// Fetch tests for each request via test_results + lab_tests
+$sql = "SELECT
+    pay.payment_id,
+    pay.total_cost,
+    pay.payment_status,
+    pay.request_id,
+    pt.patient_id,
+    pt.full_name,
+    pt.age,
+    pt.gender,
+    $ins_col,
+    r.request_date,
+    r.requested_by
+FROM payments pay
+JOIN lab_requests r  ON pay.request_id  = r.request_id
+JOIN patients    pt  ON r.patient_id    = pt.patient_id
+WHERE pay.payment_status IN ('Unpaid', 'Insurance')
+ORDER BY r.request_date DESC";
+
+$res   = $conn->query($sql);
+$bills = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
+
+// For each bill, get the tests ordered
+foreach ($bills as &$b) {
+    $rid = intval($b['request_id']);
+    $tr  = $conn->query("SELECT t.test_name, t.cost
+        FROM test_results tr
+        JOIN lab_tests t ON tr.test_id = t.test_id
+        WHERE tr.request_id = $rid");
+    $b['tests']     = [];
+    $b['test_names'] = [];
+    if ($tr) {
+        while ($row = $tr->fetch_assoc()) {
+            $b['tests'][]      = $row;
+            $b['test_names'][] = $row['test_name'];
+        }
     }
-} else {
-    $error = "Query error: " . $conn->error;
+    $b['tests_str'] = implode(', ', $b['test_names']);
+}
+unset($b);
+
+// ── Insurance providers for dropdown ─────────────────────────────────────────
+$providers = [];
+$pr = $conn->query("SELECT name FROM insurance_providers WHERE active=1 ORDER BY name");
+if ($pr) while ($row = $pr->fetch_assoc()) $providers[] = $row['name'];
+if (empty($providers)) {
+    $providers = ['NHIF / SHA','AAR Insurance','Jubilee Insurance','Britam',
+                  'Madison Insurance','CIC Insurance','Sanlam','Equity Afia','Other'];
 }
 
-// --- PAGE CONFIGURATION ---
-$page_title = "Government Billing - Yala LIMS";
+$csrf = csrf_token();
+$page_title = 'Cashier — Yala LIMS';
 include 'includes/header.php';
 ?>
 
 <style>
-    .ecitizen-header { background: #D32F2F; color: white; padding: 15px; border-radius: 15px 15px 0 0; }
-    .paybill-box { background: #fff; border: 2px dashed #D32F2F; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; }
-    .instruction-step { font-size: 0.9rem; margin-bottom: 5px; text-align: left; }
+.bill-amount { font-weight: 700; color: #dc2626; font-size: 1rem; }
+.ins-badge   { background: #ede9fe; color: #6b21a8; font-size: .72rem; font-weight: 600;
+               padding: 2px 8px; border-radius: 12px; }
+.pay-tabs    { display: flex; border: 1.5px solid #dee2e6; border-radius: 8px; overflow: hidden; margin-bottom: 18px; }
+.pay-tab     { flex: 1; padding: 9px 4px; text-align: center; font-size: .82rem; font-weight: 600;
+               cursor: pointer; border: none; background: #f8f9fa; color: #6c757d; transition: all .15s; }
+.pay-tab.active { background: #0d6efd; color: #fff; }
+.pay-panel      { display: none; }
+.pay-panel.active { display: block; }
+.patient-banner {
+    background: linear-gradient(135deg, #0f172a, #1d4ed8);
+    color: #fff; border-radius: 10px; padding: 14px 18px; margin-bottom: 18px;
+}
+.pb-name   { font-weight: 700; font-size: 1rem; }
+.pb-meta   { font-size: .82rem; opacity: .85; margin-top: 2px; }
+.pb-amount { font-size: 1.4rem; font-weight: 700; margin-top: 6px; }
+.pb-tests  { font-size: .78rem; opacity: .75; margin-top: 4px; }
+.ins-notice {
+    background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 14px; font-size: .83rem; color: #166534;
+}
+.ins-breakdown {
+    background: #faf5ff; border: 1px solid #e9d5ff;
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;
+}
+.ins-row { display: flex; justify-content: space-between; font-size: .85rem;
+           color: #4c1d95; padding: 4px 0; }
+.ins-row.total { font-weight: 700; border-top: 1px solid #d8b4fe;
+                 margin-top: 6px; padding-top: 6px; }
+.paybill-info {
+    background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;
+    padding: 14px; margin-bottom: 14px; font-size: .85rem; color: #166534;
+}
+.paybill-info .code { font-size: 1.3rem; font-weight: 700; letter-spacing: .05em; }
 </style>
 
-<div class="d-flex align-items-center justify-content-between mb-3">
-    <h4 class="fw-bold text-dark mb-0">
-        <i class="fa-solid fa-cash-register me-2 text-danger"></i>Pending Payments
-        <span class="badge bg-danger ms-2"><?php echo count($bill_rows); ?></span>
-    </h4>
-    <div class="d-flex align-items-center gap-2">
-        <?php if(file_exists('ecitizen.png')): ?>
-            <img src="ecitizen.png" height="28">
-        <?php endif; ?>
-        <span class="badge bg-dark">eCitizen Agent Mode</span>
+<?php if ($success): ?>
+<div class="alert alert-success alert-dismissible fade show">
+    <i class="fa-solid fa-circle-check me-2"></i><?= htmlspecialchars($success) ?>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+<?php endif; ?>
+<?php if ($error): ?>
+<div class="alert alert-danger alert-dismissible fade show">
+    <i class="fa-solid fa-circle-exclamation me-2"></i><?= htmlspecialchars($error) ?>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+<?php endif; ?>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="fw-bold mb-0"><i class="fa-solid fa-cash-register me-2 text-primary"></i>Cashier</h4>
+        <small class="text-muted"><?= count($bills) ?> pending bill<?= count($bills) != 1 ? 's' : '' ?></small>
     </div>
 </div>
 
-<?php if ($success): ?><div class="alert alert-success border-0 shadow-sm rounded-3"><?php echo $success; ?></div><?php endif; ?>
-<?php if ($error): ?><div class="alert alert-danger border-0 shadow-sm rounded-3"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
-
-<div class="card shadow border-0 rounded-4">
-    <div class="card-body p-0">
+<div class="glass-card p-0">
+    <?php if (empty($bills)): ?>
+    <div class="text-center py-5 text-muted">
+        <i class="fa-solid fa-circle-check fa-3x text-success mb-3"></i>
+        <h5 class="text-success">All bills settled</h5>
+        <p class="small">No pending payments at this time.</p>
+    </div>
+    <?php else: ?>
+    <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
             <thead class="table-light">
                 <tr>
-                    <th class="ps-4">Patient</th>
-                    <th>Request Date</th>
-                    <th>Bill Amount</th>
-                    <th>Action</th>
+                    <th style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em">Patient</th>
+                    <th style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em">Tests</th>
+                    <th style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em">Date</th>
+                    <th style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em">Status</th>
+                    <th class="text-end" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em">Amount (KES)</th>
+                    <th style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em">Action</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if (count($bill_rows) > 0):
-                    foreach ($bill_rows as $row):
-                        $acc_no = "YALA-" . str_pad($row['request_id'], 4, '0', STR_PAD_LEFT);
-                ?>
+            <?php foreach ($bills as $b):
+                $isIns = !empty($b['insurance_provider']);
+            ?>
                 <tr>
-                    <td class="ps-4">
-                        <span class="fw-bold d-block"><?php echo htmlspecialchars($row['full_name']); ?></span>
-                        <span class="badge bg-secondary"><?php echo htmlspecialchars($row['opd_number']); ?></span>
-                        <small class="text-muted ms-1">Req #<?php echo $row['request_id']; ?></small>
-                    </td>
-                    <td class="text-muted small"><?php echo date('d M Y H:i', strtotime($row['request_date'])); ?></td>
                     <td>
-                        <h5 class="text-danger mb-0 fw-bold">
-                            KES <?php echo number_format($row['total_bill']); ?>
-                        </h5>
-                        <?php if ($row['total_bill'] == 0): ?>
-                            <small class="text-warning"><i class="fa-solid fa-triangle-exclamation me-1"></i>No test costs set</small>
+                        <div class="fw-semibold"><?= htmlspecialchars($b['full_name']) ?></div>
+                        <small class="text-muted">
+                            <?= htmlspecialchars($b['gender'] ?? '') ?>
+                            <?php if (!empty($b['age'])): ?>&bull; <?= $b['age'] ?>y<?php endif; ?>
+                            &bull; OPD #<?= htmlspecialchars($b['patient_id']) ?>
+                        </small>
+                        <?php if ($isIns): ?>
+                        <br><span class="ins-badge mt-1 d-inline-block">
+                            <i class="fa-solid fa-hospital me-1"></i><?= htmlspecialchars($b['insurance_provider']) ?>
+                        </span>
                         <?php endif; ?>
                     </td>
                     <td>
-                        <button type="button" class="btn btn-outline-danger btn-sm rounded-pill px-4 fw-bold"
-                                data-bs-toggle="modal" data-bs-target="#payModal<?php echo $row['request_id']; ?>">
-                            <i class="fa-solid fa-money-bill-wave me-1"></i>Process Payment
+                        <small class="text-muted"><?= htmlspecialchars($b['tests_str'] ?: '—') ?></small>
+                    </td>
+                    <td><small><?= date('d M Y', strtotime($b['request_date'])) ?></small></td>
+                    <td>
+                        <?php if ($isIns): ?>
+                            <span class="badge" style="background:#ede9fe;color:#6b21a8">
+                                <i class="fa-solid fa-hospital me-1"></i>Insurance
+                            </span>
+                        <?php else: ?>
+                            <span class="badge bg-danger-subtle text-danger">Unpaid</span>
+                        <?php endif; ?>
+                    </td>
+                    <td class="text-end bill-amount"><?= number_format($b['total_cost'], 2) ?></td>
+                    <td>
+                        <button class="btn btn-primary btn-sm"
+                            onclick="openPay(<?= htmlspecialchars(json_encode($b)) ?>)">
+                            <i class="fa-solid fa-credit-card me-1"></i>Pay
                         </button>
-
-                        <!-- PAYMENT MODAL -->
-                        <div class="modal fade" id="payModal<?php echo $row['request_id']; ?>" tabindex="-1">
-                            <div class="modal-dialog">
-                                <div class="modal-content">
-                                    <div class="ecitizen-header text-center">
-                                        <h5 class="modal-title fw-bold">GOVERNMENT SERVICES PAYMENT</h5>
-                                        <small>Ministry of Health - Yala Sub-County</small>
-                                    </div>
-                                    <form method="post">
-                                        <div class="modal-body p-4">
-                                            <input type="hidden" name="request_id" value="<?php echo $row['request_id']; ?>">
-                                            <input type="hidden" name="amount" value="<?php echo $row['total_bill']; ?>">
-
-                                            <div class="paybill-box">
-                                                <h6 class="text-uppercase text-muted small fw-bold">Payment Instructions</h6>
-                                                <h2 class="fw-bold my-2">Paybill: 222 222</h2>
-                                                <h4 class="text-primary">Account: <?php echo $acc_no; ?></h4>
-                                                <h3 class="mt-2 text-danger">KES <?php echo number_format($row['total_bill']); ?></h3>
-                                            </div>
-
-                                            <div class="alert alert-light border small">
-                                                <div class="instruction-step">1. Go to M-PESA menu</div>
-                                                <div class="instruction-step">2. Select <strong>Lipa na M-PESA &rarr; Paybill</strong></div>
-                                                <div class="instruction-step">3. Business No: <strong>222222</strong></div>
-                                                <div class="instruction-step">4. Account No: <strong><?php echo $acc_no; ?></strong></div>
-                                                <div class="instruction-step">5. Amount: <strong>KES <?php echo number_format($row['total_bill']); ?></strong></div>
-                                            </div>
-
-                                            <div class="mb-3">
-                                                <label class="form-label fw-bold">M-Pesa Transaction Code</label>
-                                                <div class="input-group">
-                                                    <input type="text"
-                                                           id="code_<?php echo $row['request_id']; ?>"
-                                                           name="mpesa_code"
-                                                           class="form-control form-control-lg text-uppercase fw-bold"
-                                                           placeholder="e.g. QBH52XXXXX"
-                                                           required minlength="10" maxlength="10">
-                                                    <button type="button" class="btn btn-outline-secondary"
-                                                            onclick="generateCode(<?php echo $row['request_id']; ?>)">
-                                                        <i class="fa-solid fa-wand-magic-sparkles"></i>
-                                                    </button>
-                                                </div>
-                                                <div class="form-text">Enter the M-Pesa confirmation code from the patient's SMS.</div>
-                                            </div>
-                                        </div>
-                                        <div class="modal-footer bg-light">
-                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                            <button type="submit" name="verify_payment" class="btn btn-danger fw-bold px-4">
-                                                <i class="fa-solid fa-circle-check me-1"></i>Verify & Record Payment
-                                            </button>
-                                        </div>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
                     </td>
                 </tr>
-                <?php endforeach; else: ?>
-                <tr>
-                    <td colspan="4" class="text-center py-5 text-muted">
-                        <i class="fa-solid fa-circle-check fa-2x mb-2 d-block text-success opacity-50"></i>
-                        No pending bills — all patients are cleared.
-                    </td>
-                </tr>
-                <?php endif; ?>
+            <?php endforeach; ?>
             </tbody>
         </table>
     </div>
+    <?php endif; ?>
+</div>
+
+<!-- ── PAYMENT MODAL ──────────────────────────────────────────────────────── -->
+<div class="modal fade" id="payModal" tabindex="-1">
+<div class="modal-dialog modal-dialog-centered">
+<div class="modal-content border-0 shadow">
+    <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title fw-bold">
+            <i class="fa-solid fa-cash-register me-2"></i>Record Payment
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <form method="POST">
+    <div class="modal-body pt-2">
+        <input type="hidden" name="csrf_token"  value="<?= $csrf ?>">
+        <input type="hidden" name="payment_id"  id="mPayId">
+        <input type="hidden" name="request_id"  id="mReqId">
+        <input type="hidden" name="amount_paid" id="mAmountPaid">
+
+        <!-- Patient summary banner -->
+        <div class="patient-banner">
+            <div class="pb-name"   id="mName"></div>
+            <div class="pb-meta"   id="mMeta"></div>
+            <div class="pb-amount" id="mAmount"></div>
+            <div class="pb-tests"  id="mTests"></div>
+        </div>
+
+        <!-- Insurance notice (shown only for insurance patients) -->
+        <div class="ins-notice d-none" id="insNotice">
+            <i class="fa-solid fa-hospital me-2"></i>
+            <strong id="insNoticeName"></strong> — insurance patient.
+            The insurer will be billed. Collect any copay from the patient below.
+        </div>
+
+        <!-- Payment method tabs -->
+        <div class="pay-tabs">
+            <button type="button" class="pay-tab active" onclick="switchTab('mpesa',this)">
+                <i class="fa-solid fa-mobile-screen me-1"></i>M-Pesa
+            </button>
+            <button type="button" class="pay-tab" onclick="switchTab('cash',this)">
+                <i class="fa-solid fa-money-bill me-1"></i>Cash
+            </button>
+            <button type="button" class="pay-tab" onclick="switchTab('insurance',this)">
+                <i class="fa-solid fa-hospital me-1"></i>Insurance
+            </button>
+            <button type="button" class="pay-tab" onclick="switchTab('waiver',this)">
+                <i class="fa-solid fa-file-circle-xmark me-1"></i>Waiver
+            </button>
+        </div>
+        <input type="hidden" name="payment_method" id="methodField" value="mpesa">
+
+        <!-- M-PESA panel -->
+        <div class="pay-panel active" id="panel-mpesa">
+            <div class="paybill-info">
+                <p class="fw-semibold mb-1">Instruct patient to pay via M-Pesa:</p>
+                <div class="code">Paybill: 222222</div>
+                <ol class="mt-2 mb-0 small ps-3">
+                    <li>M-Pesa &rarr; Lipa na M-Pesa &rarr; Pay Bill</li>
+                    <li>Business No: <strong>222222</strong></li>
+                    <li>Account No: patient OPD number</li>
+                    <li>Enter amount, PIN &amp; confirm</li>
+                </ol>
+            </div>
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">M-Pesa Confirmation Code</label>
+                <input name="mpesa_code" id="mpesaCode" class="form-control"
+                    placeholder="e.g. QGL7ABCDEF" style="font-family:monospace;letter-spacing:.05em">
+            </div>
+        </div>
+
+        <!-- CASH panel -->
+        <div class="pay-panel" id="panel-cash">
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">Receipt / Reference No.</label>
+                <input name="cash_ref" class="form-control" placeholder="e.g. CASH-001">
+            </div>
+        </div>
+
+        <!-- INSURANCE panel -->
+        <div class="pay-panel" id="panel-insurance">
+            <!-- Coverage breakdown -->
+            <div class="ins-breakdown" id="insBreakdown">
+                <div class="ins-row"><span>Total Bill</span><span id="ibTotal"></span></div>
+                <div class="ins-row"><span>Insurer Pays (estimate)</span><span id="ibCover"></span></div>
+                <div class="ins-row total"><span>Patient Copay</span><span id="ibCopay"></span></div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">Insurance Provider</label>
+                <select name="insurer_name" id="insurerSelect" class="form-select">
+                    <option value="">— Select insurer —</option>
+                    <?php foreach ($providers as $p): ?>
+                    <option value="<?= htmlspecialchars($p) ?>"><?= htmlspecialchars($p) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">Member / Card Number</label>
+                <input name="insurance_member_no" id="memberNoField" class="form-control"
+                    placeholder="e.g. SHA-1234567890">
+            </div>
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">Pre-auth / Claim Reference</label>
+                <input name="claim_ref" class="form-control" placeholder="Auth code (if available)">
+            </div>
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">Copay Collected from Patient (KES)</label>
+                <input name="copay_amount" id="copayField" type="number"
+                    step="0.01" min="0" value="0" class="form-control">
+            </div>
+        </div>
+
+        <!-- WAIVER panel -->
+        <div class="pay-panel" id="panel-waiver">
+            <div class="alert alert-warning small">
+                <i class="fa-solid fa-triangle-exclamation me-1"></i>
+                Fee waivers require authorisation from a senior officer.
+            </div>
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">Reason for Waiver</label>
+                <textarea name="waiver_reason" class="form-control" rows="3"
+                    placeholder="State the reason clearly…"></textarea>
+            </div>
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">Authorising Officer</label>
+                <input name="waiver_officer" class="form-control"
+                    placeholder="Full name and designation">
+            </div>
+        </div>
+    </div>
+    <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button name="record_payment" class="btn btn-success px-4">
+            <i class="fa-solid fa-circle-check me-1"></i>Confirm Payment
+        </button>
+    </div>
+    </form>
+</div>
+</div>
 </div>
 
 <script>
-function generateCode(id) {
-    const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    let code = "S";
-    for (let i = 0; i < 9; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
+const INS_COVER_PCT = 0.80; // default 80% insurer coverage estimate
+
+function openPay(b) {
+    document.getElementById('mPayId').value       = b.payment_id;
+    document.getElementById('mReqId').value       = b.request_id;
+    document.getElementById('mAmountPaid').value  = b.total_cost;
+    document.getElementById('mName').textContent  = b.full_name;
+    document.getElementById('mMeta').textContent  =
+        (b.gender || '') + (b.age ? ' · ' + b.age + 'y' : '') + ' · OPD #' + b.patient_id;
+    document.getElementById('mAmount').textContent = 'KES ' + parseFloat(b.total_cost).toFixed(2);
+    document.getElementById('mTests').textContent  = b.tests_str || '';
+    document.getElementById('mpesaCode').value     = '';
+
+    const isIns = b.insurance_provider && b.insurance_provider !== '';
+
+    // Insurance notice
+    const notice = document.getElementById('insNotice');
+    if (isIns) {
+        notice.classList.remove('d-none');
+        document.getElementById('insNoticeName').textContent = b.insurance_provider;
+    } else {
+        notice.classList.add('d-none');
     }
-    document.getElementById('code_' + id).value = code;
+
+    if (isIns) {
+        // Auto-switch to insurance tab
+        const insBtn = document.querySelector('.pay-tab:nth-child(3)');
+        switchTab('insurance', insBtn);
+
+        // Pre-select the provider in dropdown
+        const sel = document.getElementById('insurerSelect');
+        for (let o of sel.options) {
+            if (o.value === b.insurance_provider) { sel.value = o.value; break; }
+        }
+
+        // Pre-fill member number if available
+        if (b.insurance_member_no) {
+            document.getElementById('memberNoField').value = b.insurance_member_no;
+        }
+
+        // Calculate coverage breakdown
+        const total = parseFloat(b.total_cost);
+        const cover = Math.round(total * INS_COVER_PCT * 100) / 100;
+        const copay = Math.round((total - cover) * 100) / 100;
+        document.getElementById('ibTotal').textContent  = 'KES ' + total.toFixed(2);
+        document.getElementById('ibCover').textContent  = 'KES ' + cover.toFixed(2);
+        document.getElementById('ibCopay').textContent  = 'KES ' + copay.toFixed(2);
+        document.getElementById('copayField').value     = copay.toFixed(2);
+        document.getElementById('mAmountPaid').value    = copay.toFixed(2);
+
+    } else {
+        switchTab('mpesa', document.querySelector('.pay-tab:nth-child(1)'));
+    }
+
+    new bootstrap.Modal(document.getElementById('payModal')).show();
+}
+
+function switchTab(method, btn) {
+    document.querySelectorAll('.pay-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.pay-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + method).classList.add('active');
+    document.getElementById('methodField').value = method;
 }
 </script>
 

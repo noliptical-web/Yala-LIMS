@@ -39,13 +39,13 @@
                 <div class="col-md-4 mb-4">
                     <h6 class="text-uppercase fw-bold">Project Details</h6>
                     <p class="small text-muted mb-1">
-                        <i class="fa-solid fa-code me-2"></i>Developed by: <strong>Your Name</strong>
+                        <i class="fa-solid fa-code me-2"></i>Developed by: <strong>Owuor Collins</strong> (SCCI/01227/2022)
                     </p>
                     <p class="small text-muted mb-1">
-                        <i class="fa-solid fa-layer-group me-2"></i>Computer Science Dept
+                        <i class="fa-solid fa-university me-2"></i>Technical University of Kenya
                     </p>
                     <p class="small text-muted">
-                        <i class="fa-solid fa-server me-2"></i>Ver 1.0 (Stable Release)
+                        <i class="fa-solid fa-chalkboard-teacher me-2"></i>Supervised by: Dr. E. Ngwawe &amp; Mr. P. Kariuki
                     </p>
                 </div>
 

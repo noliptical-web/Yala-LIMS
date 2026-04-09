@@ -1,424 +1,238 @@
 <?php
-// reports.php
 session_start();
 require_once 'includes/db_connect.php';
+if (!isset($_SESSION['loggedin'])||$_SESSION['role']!='Admin') { header("location: dashboard.php"); exit; }
 
-// Admin only
-if (!isset($_SESSION['loggedin']) || $_SESSION['role'] != 'Admin') {
-    header("location: dashboard.php");
-    exit;
+$date_from=isset($_GET['date_from'])?date('Y-m-d',strtotime($_GET['date_from'])):date('Y-m-01');
+$date_to  =isset($_GET['date_to'])  ?date('Y-m-d',strtotime($_GET['date_to']))  :date('Y-m-d');
+
+$stmt=$conn->prepare("SELECT COUNT(*) as c FROM patients WHERE DATE(registered_at) BETWEEN ? AND ?");
+$stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $total_patients=$stmt->get_result()->fetch_assoc()['c']; $stmt->close();
+
+$stmt=$conn->prepare("SELECT COUNT(*) as c FROM lab_requests WHERE DATE(request_date) BETWEEN ? AND ?");
+$stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $total_requests=$stmt->get_result()->fetch_assoc()['c']; $stmt->close();
+
+$stmt=$conn->prepare("SELECT COUNT(*) as c FROM lab_requests WHERE status='Completed' AND DATE(request_date) BETWEEN ? AND ?");
+$stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $total_completed=$stmt->get_result()->fetch_assoc()['c']; $stmt->close();
+
+$stmt=$conn->prepare("SELECT COUNT(*) as c FROM lab_requests WHERE status='Pending' AND DATE(request_date) BETWEEN ? AND ?");
+$stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $total_pending=$stmt->get_result()->fetch_assoc()['c']; $stmt->close();
+
+$stmt=$conn->prepare("SELECT COALESCE(SUM(amount_paid),0) as t FROM payments WHERE DATE(payment_date) BETWEEN ? AND ?");
+$stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $total_revenue=$stmt->get_result()->fetch_assoc()['t']; $stmt->close();
+
+$completion_rate=$total_requests>0?round(($total_completed/$total_requests)*100):0;
+
+$daily_trend=[];
+for($i=6;$i>=0;$i--){
+    $day=date('Y-m-d',strtotime("-{$i} days",strtotime($date_to)));
+    $stmt=$conn->prepare("SELECT COUNT(*) as reqs, COALESCE((SELECT SUM(amount_paid) FROM payments WHERE DATE(payment_date)=?),0) as rev FROM lab_requests WHERE DATE(request_date)=?");
+    $stmt->bind_param("ss",$day,$day); $stmt->execute();
+    $row=$stmt->get_result()->fetch_assoc(); $stmt->close();
+    $daily_trend[]=['date'=>date('d M',strtotime($day)),'requests'=>(int)$row['reqs'],'revenue'=>(float)$row['rev']];
 }
 
-// --- DATE FILTER ---
-$date_from = isset($_GET['date_from']) ? $_GET['date_from'] : date('Y-m-01'); // default: 1st of month
-$date_to   = isset($_GET['date_to'])   ? $_GET['date_to']   : date('Y-m-d');  // default: today
+$stmt=$conn->prepare("SELECT t.test_name,COUNT(*) as cnt,SUM(t.cost) as rev FROM test_results tr JOIN lab_tests t ON tr.test_id=t.test_id JOIN lab_requests r ON tr.request_id=r.request_id WHERE DATE(r.request_date) BETWEEN ? AND ? GROUP BY t.test_id ORDER BY cnt DESC LIMIT 8");
+$stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $top_tests=$stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
 
-// Sanitize dates
-$date_from = date('Y-m-d', strtotime($date_from));
-$date_to   = date('Y-m-d', strtotime($date_to));
+$stmt=$conn->prepare("SELECT r.requested_by as name,COUNT(*) as cnt FROM lab_requests r WHERE r.status='Completed' AND DATE(r.request_date) BETWEEN ? AND ? GROUP BY r.requested_by ORDER BY cnt DESC LIMIT 5");
+$stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $staff_perf=$stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
 
-// ============================================================
-// SECTION 1: SUMMARY STATS
-// ============================================================
-$total_patients  = $conn->query("SELECT COUNT(*) as c FROM patients WHERE DATE(registered_at) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc()['c'];
-$total_requests  = $conn->query("SELECT COUNT(*) as c FROM lab_requests WHERE DATE(request_date) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc()['c'];
-$total_completed = $conn->query("SELECT COUNT(*) as c FROM lab_requests WHERE status='Completed' AND DATE(request_date) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc()['c'];
-$total_pending   = $conn->query("SELECT COUNT(*) as c FROM lab_requests WHERE status='Pending' AND DATE(request_date) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc()['c'];
-$total_revenue   = $conn->query("SELECT COALESCE(SUM(amount_paid),0) as t FROM payments WHERE DATE(payment_date) BETWEEN '$date_from' AND '$date_to'")->fetch_assoc()['t'];
-$total_unpaid_amt= $conn->query("SELECT COALESCE(SUM(total),0) as t FROM (SELECT r.request_id, SUM(t.cost) as total FROM lab_requests r JOIN test_results tr ON r.request_id=tr.request_id JOIN lab_tests t ON tr.test_id=t.test_id WHERE r.payment_status='Unpaid' AND DATE(r.request_date) BETWEEN '$date_from' AND '$date_to' GROUP BY r.request_id) x")->fetch_assoc()['t'];
+$stmt=$conn->prepare("SELECT p.full_name,pay.amount_paid,pay.payment_method,pay.reference_no,pay.payment_date FROM payments pay JOIN lab_requests r ON pay.request_id=r.request_id JOIN patients p ON r.patient_id=p.patient_id WHERE DATE(pay.payment_date) BETWEEN ? AND ? ORDER BY pay.payment_date DESC LIMIT 10");
+$stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $recent_txns=$stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
 
-// Completion rate
-$completion_rate = $total_requests > 0 ? round(($total_completed / $total_requests) * 100) : 0;
+$stmt=$conn->prepare("SELECT p.gender,COUNT(DISTINCT r.request_id) as cnt FROM lab_requests r JOIN patients p ON r.patient_id=p.patient_id WHERE DATE(r.request_date) BETWEEN ? AND ? GROUP BY p.gender");
+$stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $gender_rows=$stmt->get_result()->fetch_all(MYSQLI_ASSOC); $stmt->close();
+$g_labels=array_column($gender_rows,'gender'); $g_counts=array_column($gender_rows,'cnt');
 
-// ============================================================
-// SECTION 2: DAILY TREND (last 7 days from date_to)
-// ============================================================
-$daily_trend = [];
-for ($i = 6; $i >= 0; $i--) {
-    $day = date('Y-m-d', strtotime("-$i days", strtotime($date_to)));
-    $r = $conn->query("SELECT COUNT(*) as reqs, COALESCE(SUM(p.amount_paid),0) as rev
-                       FROM lab_requests lr
-                       LEFT JOIN payments p ON lr.request_id = p.request_id AND DATE(p.payment_date) = '$day'
-                       WHERE DATE(lr.request_date) = '$day'");
-    $row = $r->fetch_assoc();
-    $daily_trend[] = ['date' => date('d M', strtotime($day)), 'requests' => (int)$row['reqs'], 'revenue' => (float)$row['rev']];
-}
-
-// ============================================================
-// SECTION 3: TOP TESTS
-// ============================================================
-$top_tests = $conn->query("
-    SELECT t.test_name, COUNT(*) as count, SUM(t.cost) as revenue
-    FROM test_results tr
-    JOIN lab_tests t ON tr.test_id = t.test_id
-    JOIN lab_requests r ON tr.request_id = r.request_id
-    WHERE DATE(r.request_date) BETWEEN '$date_from' AND '$date_to'
-    GROUP BY t.test_id
-    ORDER BY count DESC
-    LIMIT 8
-");
-
-// ============================================================
-// SECTION 4: STAFF PERFORMANCE (LabTechs by completions)
-// ============================================================
-$staff_perf = $conn->query("
-    SELECT r.requested_by as name, COUNT(*) as completed
-    FROM lab_requests r
-    WHERE r.status = 'Completed' AND DATE(r.request_date) BETWEEN '$date_from' AND '$date_to'
-    GROUP BY r.requested_by
-    ORDER BY completed DESC
-    LIMIT 5
-");
-
-// ============================================================
-// SECTION 5: RECENT TRANSACTIONS
-// ============================================================
-$recent_txns = $conn->query("
-    SELECT p.full_name, pay.amount_paid, pay.payment_method, pay.reference_no, pay.payment_date
-    FROM payments pay
-    JOIN lab_requests r ON pay.request_id = r.request_id
-    JOIN patients p ON r.patient_id = p.patient_id
-    WHERE DATE(pay.payment_date) BETWEEN '$date_from' AND '$date_to'
-    ORDER BY pay.payment_date DESC
-    LIMIT 10
-");
-
-// ============================================================
-// SECTION 6: GENDER BREAKDOWN
-// ============================================================
-$gender_data = $conn->query("
-    SELECT p.gender, COUNT(DISTINCT r.request_id) as cnt
-    FROM lab_requests r
-    JOIN patients p ON r.patient_id = p.patient_id
-    WHERE DATE(r.request_date) BETWEEN '$date_from' AND '$date_to'
-    GROUP BY p.gender
-");
-$gender_labels = []; $gender_counts = [];
-while ($g = $gender_data->fetch_assoc()) {
-    $gender_labels[] = $g['gender'];
-    $gender_counts[] = (int)$g['cnt'];
-}
-
-// --- PAGE CONFIGURATION ---
-$page_title = "Reports & Analytics - Yala LIMS";
+$page_title="Reports & Analytics";
 include 'includes/header.php';
 ?>
-
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-
 <style>
-    .stat-card { border:none; border-radius:14px; color:white; position:relative; overflow:hidden; transition: transform .2s; }
-    .stat-card:hover { transform: translateY(-4px); }
-    .stat-card .bg-icon { position:absolute; right:-8px; bottom:-8px; font-size:4.5rem; opacity:.15; }
-    .section-title { font-size:.7rem; font-weight:800; letter-spacing:2px; text-transform:uppercase; color:#90a4ae; margin-bottom:12px; }
-    .glass-card { background:rgba(255,255,255,.97); border:none; border-radius:14px; box-shadow:0 4px 20px rgba(31,38,135,.09); }
-    .table th { font-size:.75rem; text-transform:uppercase; letter-spacing:.8px; color:#607d8b; font-weight:600; }
-    .progress { height:8px; border-radius:10px; }
-    .filter-bar { background:rgba(255,255,255,.95); border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,.07); }
-    .badge-pill { border-radius:50px; padding: 5px 12px; font-size:.75rem; }
-    @media print {
-        .no-print { display:none !important; }
-        .glass-card { box-shadow:none !important; border:1px solid #eee !important; }
-    }
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Serif+Display&display=swap');
+.pw{width:100%;padding:0 0 48px;font-family:'DM Sans',sans-serif}
+.ph{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap;gap:12px}
+.ph h1{font-family:'DM Serif Display',serif;font-size:1.85rem;color:#0f172a;margin:0 0 3px;letter-spacing:-.4px}
+.ph p{font-size:.8rem;color:#94a3b8;margin:0}
+.filter-bar{background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:14px 18px;margin-bottom:22px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.ff{display:flex;flex-direction:column;gap:4px}
+.ff label{font-size:.67rem;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#94a3b8}
+.ff input{border:1.5px solid #e2e8f0;border-radius:7px;padding:8px 10px;font-size:.83rem;font-family:'DM Sans',sans-serif;outline:none;background:#fafafa;transition:border-color .15s;width:130px}
+.ff input:focus{border-color:#3b82f6;background:#fff}
+.btn-apply{background:#1d4ed8;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:.83rem;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;align-self:flex-end;transition:background .15s}
+.btn-apply:hover{background:#1e40af}
+.btn-quick{background:#fff;color:#64748b;border:1.5px solid #e2e8f0;border-radius:7px;padding:9px 12px;font-size:.78rem;font-family:'DM Sans',sans-serif;cursor:pointer;text-decoration:none;align-self:flex-end;transition:all .15s;display:inline-block}
+.btn-quick:hover{border-color:#3b82f6;color:#1d4ed8}
+.btn-print{background:#fff;color:#64748b;border:1.5px solid #e2e8f0;border-radius:7px;padding:9px 12px;font-size:.78rem;font-family:'DM Sans',sans-serif;cursor:pointer;align-self:flex-end}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:22px}
+.sc{border-radius:12px;padding:14px 16px;color:#fff;position:relative;overflow:hidden}
+.sc-n{font-size:1.6rem;font-weight:700;font-family:'DM Serif Display',serif;line-height:1;margin-bottom:2px}
+.sc-l{font-size:.68rem;opacity:.85;font-weight:500}
+.sc-ico{position:absolute;right:-5px;bottom:-5px;font-size:3.5rem;opacity:.12}
+.panels2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
+.panels3{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:18px}
+.panel{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;overflow:hidden}
+.phead{padding:13px 18px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between}
+.ptitle{font-size:.62rem;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#94a3b8}
+.pbody{padding:18px}
+.chart-wrap{padding:16px 18px;height:240px}
+table.rt{width:100%;border-collapse:collapse}
+table.rt thead th{padding:9px 16px;font-size:.62rem;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#94a3b8;text-align:left;border-bottom:1px solid #f1f5f9;white-space:nowrap}
+table.rt tbody tr{border-bottom:1px solid #f9fafb;transition:background .1s}
+table.rt tbody tr:hover{background:#fafafa}
+table.rt td{padding:10px 16px;font-size:.83rem;vertical-align:middle}
+.bar-wrap{height:7px;background:#f1f5f9;border-radius:20px;overflow:hidden}
+.bar-fill{height:100%;border-radius:20px;background:#1d4ed8}
+.mref{font-size:.7rem;font-weight:600;background:#fef3c7;color:#92400e;border-radius:20px;padding:2px 8px}
+.cnt-badge{font-size:.68rem;font-weight:700;background:#dbeafe;color:#1d4ed8;border-radius:20px;padding:2px 8px}
+.rev-val{font-weight:600;color:#16a34a;font-size:.83rem}
+.staff-row{display:flex;flex-direction:column;gap:10px}
+.sr-item{display:flex;flex-direction:column;gap:4px}
+.sr-top{display:flex;justify-content:space-between;font-size:.8rem}
+.sr-name{font-weight:500;color:#374151}
+.sr-cnt{font-size:.72rem;font-weight:700;color:#1d4ed8}
+.mcode{font-size:.75rem;font-family:monospace;color:#94a3b8}
+.mpay{font-size:.75rem;font-weight:600;background:#eff6ff;color:#1d4ed8;border-radius:20px;padding:2px 8px}
+@media print{.filter-bar,.no-print{display:none!important}}
+@media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr)}.panels2,.panels3{grid-template-columns:1fr}}
+@media(max-width:600px){.stats{grid-template-columns:repeat(2,1fr)}}
 </style>
 
-<!-- PAGE HEADER -->
-<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-    <div>
-        <h4 class="fw-bold text-dark mb-0"><i class="fa-solid fa-chart-pie me-2 text-primary"></i>Reports & Analytics</h4>
-        <small class="text-muted">Period: <?php echo date('d M Y', strtotime($date_from)); ?> &mdash; <?php echo date('d M Y', strtotime($date_to)); ?></small>
+<div class="pw">
+<div class="ph">
+    <div><h1>Reports</h1><p><?php echo date('d M Y',strtotime($date_from)); ?> — <?php echo date('d M Y',strtotime($date_to)); ?></p></div>
+    <button onclick="window.print()" class="btn-print no-print"><i class="fa-solid fa-print me-1"></i> Print</button>
+</div>
+
+<form method="get" class="filter-bar no-print">
+    <div class="ff"><label>From</label><input type="text" name="date_from" id="dfrom" value="<?php echo $date_from; ?>"></div>
+    <div class="ff"><label>To</label><input type="text" name="date_to" id="dto" value="<?php echo $date_to; ?>"></div>
+    <button type="submit" class="btn-apply">Apply</button>
+    <a href="?date_from=<?php echo date('Y-m-d'); ?>&date_to=<?php echo date('Y-m-d'); ?>" class="btn-quick">Today</a>
+    <a href="?date_from=<?php echo date('Y-m-d',strtotime('monday this week')); ?>&date_to=<?php echo date('Y-m-d'); ?>" class="btn-quick">This Week</a>
+    <a href="?date_from=<?php echo date('Y-m-01'); ?>&date_to=<?php echo date('Y-m-d'); ?>" class="btn-quick">This Month</a>
+    <a href="reports.php" class="btn-quick">Reset</a>
+</form>
+
+<div class="stats">
+    <div class="sc" style="background:linear-gradient(135deg,#0f766e,#14b8a6)">
+        <div class="sc-n"><?php echo $total_patients; ?></div><div class="sc-l">New Patients</div><i class="fa-solid fa-users sc-ico"></i>
     </div>
-    <div class="d-flex gap-2 no-print">
-        <button onclick="window.print()" class="btn btn-outline-secondary btn-sm rounded-pill px-3">
-            <i class="fa-solid fa-print me-1"></i> Print
-        </button>
-        <a href="reports.php" class="btn btn-outline-primary btn-sm rounded-pill px-3">
-            <i class="fa-solid fa-rotate-right me-1"></i> Reset
-        </a>
+    <div class="sc" style="background:linear-gradient(135deg,#1d4ed8,#3b82f6)">
+        <div class="sc-n"><?php echo $total_requests; ?></div><div class="sc-l">Total Requests</div><i class="fa-solid fa-flask sc-ico"></i>
+    </div>
+    <div class="sc" style="background:linear-gradient(135deg,#16a34a,#22c55e)">
+        <div class="sc-n"><?php echo $total_completed; ?></div><div class="sc-l">Completed</div><i class="fa-solid fa-check-circle sc-ico"></i>
+    </div>
+    <div class="sc" style="background:linear-gradient(135deg,#b45309,#f59e0b)">
+        <div class="sc-n"><?php echo $completion_rate; ?>%</div><div class="sc-l">Completion Rate</div><i class="fa-solid fa-chart-line sc-ico"></i>
+    </div>
+    <div class="sc" style="background:linear-gradient(135deg,#9f1239,#e11d48)">
+        <div class="sc-n">KES <?php echo number_format($total_revenue/1000,1); ?>k</div><div class="sc-l">Revenue</div><i class="fa-solid fa-sack-dollar sc-ico"></i>
     </div>
 </div>
 
-<!-- DATE FILTER BAR -->
-<div class="filter-bar p-3 mb-4 no-print">
-    <form method="get" class="row g-2 align-items-end">
-        <div class="col-auto">
-            <label class="form-label small fw-bold mb-1">From</label>
-            <input type="text" name="date_from" id="date_from" class="form-control form-control-sm" value="<?php echo $date_from; ?>">
-        </div>
-        <div class="col-auto">
-            <label class="form-label small fw-bold mb-1">To</label>
-            <input type="text" name="date_to" id="date_to" class="form-control form-control-sm" value="<?php echo $date_to; ?>">
-        </div>
-        <div class="col-auto d-flex gap-2">
-            <button type="submit" class="btn btn-primary btn-sm px-4 rounded-pill">Apply</button>
-            <!-- QUICK RANGES -->
-            <a href="?date_from=<?php echo date('Y-m-d'); ?>&date_to=<?php echo date('Y-m-d'); ?>" class="btn btn-outline-secondary btn-sm rounded-pill">Today</a>
-            <a href="?date_from=<?php echo date('Y-m-d', strtotime('monday this week')); ?>&date_to=<?php echo date('Y-m-d'); ?>" class="btn btn-outline-secondary btn-sm rounded-pill">This Week</a>
-            <a href="?date_from=<?php echo date('Y-m-01'); ?>&date_to=<?php echo date('Y-m-d'); ?>" class="btn btn-outline-secondary btn-sm rounded-pill">This Month</a>
-        </div>
-    </form>
-</div>
-
-<!-- SUMMARY STAT CARDS -->
-<div class="row g-3 mb-4">
-    <div class="col-6 col-md-4 col-xl-2">
-        <div class="card stat-card p-3 shadow" style="background:linear-gradient(135deg,#11998e,#38ef7d);">
-            <p class="mb-1 small opacity-75 fw-bold">Patients</p>
-            <h3 class="fw-bold mb-0"><?php echo $total_patients; ?></h3>
-            <i class="fa-solid fa-users bg-icon"></i>
-        </div>
+<!-- Charts row -->
+<div class="panels3">
+    <div class="panel"><div class="phead"><span class="ptitle">Daily Trend (Last 7 days)</span></div>
+        <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
     </div>
-    <div class="col-6 col-md-4 col-xl-2">
-        <div class="card stat-card p-3 shadow" style="background:linear-gradient(135deg,#1e90ff,#6ab8f7);">
-            <p class="mb-1 small opacity-75 fw-bold">Requests</p>
-            <h3 class="fw-bold mb-0"><?php echo $total_requests; ?></h3>
-            <i class="fa-solid fa-flask bg-icon"></i>
-        </div>
-    </div>
-    <div class="col-6 col-md-4 col-xl-2">
-        <div class="card stat-card p-3 shadow" style="background:linear-gradient(135deg,#56ab2f,#a8e063);">
-            <p class="mb-1 small opacity-75 fw-bold">Completed</p>
-            <h3 class="fw-bold mb-0"><?php echo $total_completed; ?></h3>
-            <i class="fa-solid fa-circle-check bg-icon"></i>
-        </div>
-    </div>
-    <div class="col-6 col-md-4 col-xl-2">
-        <div class="card stat-card p-3 shadow" style="background:linear-gradient(135deg,#f7971e,#ffd200);">
-            <p class="mb-1 small opacity-75 fw-bold">Pending</p>
-            <h3 class="fw-bold mb-0"><?php echo $total_pending; ?></h3>
-            <i class="fa-solid fa-hourglass-half bg-icon"></i>
-        </div>
-    </div>
-    <div class="col-6 col-md-4 col-xl-2">
-        <div class="card stat-card p-3 shadow" style="background:linear-gradient(135deg,#2980b9,#6dd5fa);">
-            <p class="mb-1 small opacity-75 fw-bold">Revenue</p>
-            <h4 class="fw-bold mb-0">KES <?php echo number_format($total_revenue); ?></h4>
-            <i class="fa-solid fa-money-bill-wave bg-icon"></i>
-        </div>
-    </div>
-    <div class="col-6 col-md-4 col-xl-2">
-        <div class="card stat-card p-3 shadow" style="background:linear-gradient(135deg,#c0392b,#e74c3c);">
-            <p class="mb-1 small opacity-75 fw-bold">Unpaid</p>
-            <h4 class="fw-bold mb-0">KES <?php echo number_format($total_unpaid_amt); ?></h4>
-            <i class="fa-solid fa-file-invoice-dollar bg-icon"></i>
-        </div>
+    <div class="panel"><div class="phead"><span class="ptitle">By Gender</span></div>
+        <div class="chart-wrap" style="display:flex;align-items:center;justify-content:center"><canvas id="genderChart" style="max-height:200px"></canvas></div>
     </div>
 </div>
 
-<!-- COMPLETION RATE BAR -->
-<div class="glass-card p-3 mb-4 d-flex align-items-center gap-3">
-    <div class="flex-shrink-0">
-        <span class="fw-bold text-dark">Completion Rate</span>
-        <span class="badge bg-<?php echo $completion_rate >= 80 ? 'success' : ($completion_rate >= 50 ? 'warning' : 'danger'); ?> ms-2 badge-pill">
-            <?php echo $completion_rate; ?>%
-        </span>
-    </div>
-    <div class="flex-grow-1">
-        <div class="progress">
-            <div class="progress-bar bg-<?php echo $completion_rate >= 80 ? 'success' : ($completion_rate >= 50 ? 'warning' : 'danger'); ?>"
-                 style="width:<?php echo $completion_rate; ?>%"></div>
-        </div>
-    </div>
-</div>
-
-<!-- ROW: CHARTS -->
-<div class="row g-3 mb-4">
-
-    <!-- DAILY TREND CHART -->
-    <div class="col-md-8">
-        <div class="glass-card p-4 h-100">
-            <p class="section-title">7-Day Activity Trend</p>
-            <canvas id="trendChart" height="100"></canvas>
-        </div>
-    </div>
-
-    <!-- GENDER DONUT -->
-    <div class="col-md-4">
-        <div class="glass-card p-4 h-100 d-flex flex-column">
-            <p class="section-title">Patient Gender Split</p>
-            <div class="flex-grow-1 d-flex align-items-center justify-content-center">
-                <canvas id="genderChart" style="max-height:200px;"></canvas>
-            </div>
-        </div>
-    </div>
-
-</div>
-
-<!-- ROW: TOP TESTS + STAFF PERFORMANCE -->
-<div class="row g-3 mb-4">
-
-    <!-- TOP TESTS -->
-    <div class="col-md-7">
-        <div class="glass-card p-4 h-100">
-            <p class="section-title">Most Requested Tests</p>
-            <?php if ($top_tests && $top_tests->num_rows > 0):
-                $max_count = null;
-                $rows_tt = []; while($r=$top_tests->fetch_assoc()) $rows_tt[]=$r;
-                $max_count = max(array_column($rows_tt, 'count'));
-            ?>
-                <table class="table table-sm table-hover mb-0">
-                    <thead><tr><th>Test Name</th><th>Count</th><th>Revenue (KES)</th><th style="width:30%"></th></tr></thead>
-                    <tbody>
-                    <?php foreach($rows_tt as $t): $pct = $max_count > 0 ? round(($t['count']/$max_count)*100) : 0; ?>
-                        <tr>
-                            <td class="fw-medium small"><?php echo htmlspecialchars($t['test_name']); ?></td>
-                            <td><span class="badge bg-primary rounded-pill"><?php echo $t['count']; ?></span></td>
-                            <td class="small text-success fw-bold"><?php echo number_format($t['revenue']); ?></td>
-                            <td>
-                                <div class="progress">
-                                    <div class="progress-bar bg-primary" style="width:<?php echo $pct; ?>%"></div>
-                                </div>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
-            <?php else: ?>
-                <p class="text-muted text-center py-4">No data for selected period.</p>
-            <?php endif; ?>
-        </div>
-    </div>
-
-    <!-- STAFF PERFORMANCE -->
-    <div class="col-md-5">
-        <div class="glass-card p-4 h-100">
-            <p class="section-title">Doctor Activity (Requests Made)</p>
-            <?php if ($staff_perf && $staff_perf->num_rows > 0):
-                $sp_rows = []; while($r=$staff_perf->fetch_assoc()) $sp_rows[]=$r;
-                $sp_max = max(array_column($sp_rows,'completed'));
-            ?>
-                <div class="d-flex flex-column gap-3">
-                <?php foreach($sp_rows as $i => $sp):
-                    $pct = $sp_max > 0 ? round(($sp['completed']/$sp_max)*100) : 0;
-                    $colors = ['primary','success','warning','info','danger'];
-                    $col = $colors[$i % count($colors)];
-                ?>
-                    <div>
-                        <div class="d-flex justify-content-between mb-1">
-                            <span class="small fw-bold text-dark">Dr. <?php echo htmlspecialchars($sp['name']); ?></span>
-                            <span class="badge bg-<?php echo $col; ?> badge-pill"><?php echo $sp['completed']; ?></span>
-                        </div>
-                        <div class="progress">
-                            <div class="progress-bar bg-<?php echo $col; ?>" style="width:<?php echo $pct; ?>%"></div>
-                        </div>
-                    </div>
-                <?php endforeach; ?>
-                </div>
-            <?php else: ?>
-                <p class="text-muted text-center py-4">No data for selected period.</p>
-            <?php endif; ?>
-        </div>
-    </div>
-
-</div>
-
-<!-- RECENT TRANSACTIONS TABLE -->
-<div class="glass-card p-4 mb-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <p class="section-title mb-0">Recent Transactions</p>
-        <a href="billing.php" class="btn btn-sm btn-outline-primary rounded-pill px-3 no-print">View All Billing</a>
-    </div>
-    <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>Patient</th>
-                    <th>Amount (KES)</th>
-                    <th>Method</th>
-                    <th>Reference</th>
-                    <th>Date & Time</th>
-                </tr>
-            </thead>
+<!-- Tables row -->
+<div class="panels2">
+    <div class="panel">
+        <div class="phead"><span class="ptitle">Top Tests</span><span style="font-size:.7rem;color:#94a3b8"><?php echo count($top_tests); ?> tests</span></div>
+        <?php if($top_tests): $max=max(array_column($top_tests,'cnt')); ?>
+        <table class="rt">
+            <thead><tr><th>Test</th><th>Count</th><th>Revenue</th><th style="width:22%"></th></tr></thead>
             <tbody>
-                <?php if ($recent_txns && $recent_txns->num_rows > 0):
-                    while($txn = $recent_txns->fetch_assoc()): ?>
-                <tr>
-                    <td class="fw-bold"><?php echo htmlspecialchars($txn['full_name']); ?></td>
-                    <td class="text-success fw-bold">KES <?php echo number_format($txn['amount_paid'], 2); ?></td>
-                    <td><span class="badge bg-info text-dark"><?php echo htmlspecialchars($txn['payment_method']); ?></span></td>
-                    <td><code><?php echo htmlspecialchars($txn['reference_no']); ?></code></td>
-                    <td class="small text-muted"><?php echo date('d M Y H:i', strtotime($txn['payment_date'])); ?></td>
-                </tr>
-                <?php endwhile; else: ?>
-                <tr><td colspan="5" class="text-center text-muted py-4">No transactions in this period.</td></tr>
-                <?php endif; ?>
+            <?php foreach($top_tests as $t): $pct=$max>0?round($t['cnt']/$max*100):0; ?>
+            <tr>
+                <td style="font-weight:500;color:#0f172a"><?php echo htmlspecialchars($t['test_name']); ?></td>
+                <td><span class="cnt-badge"><?php echo $t['cnt']; ?></span></td>
+                <td class="rev-val"><?php echo number_format($t['rev']); ?></td>
+                <td><div class="bar-wrap"><div class="bar-fill" style="width:<?php echo $pct; ?>%"></div></div></td>
+            </tr>
+            <?php endforeach; ?>
             </tbody>
         </table>
+        <?php else: ?><div style="padding:32px;text-align:center;color:#94a3b8;font-size:.83rem">No data.</div><?php endif; ?>
+    </div>
+
+    <div class="panel">
+        <div class="phead"><span class="ptitle">Doctor Activity</span></div>
+        <div class="pbody">
+        <?php if($staff_perf): $sp_max=max(array_column($staff_perf,'cnt')); ?>
+        <div class="staff-row">
+        <?php foreach($staff_perf as $sp): $pct=$sp_max>0?round($sp['cnt']/$sp_max*100):0; ?>
+        <div class="sr-item">
+            <div class="sr-top"><span class="sr-name">Dr. <?php echo htmlspecialchars($sp['name']); ?></span><span class="sr-cnt"><?php echo $sp['cnt']; ?></span></div>
+            <div class="bar-wrap"><div class="bar-fill" style="width:<?php echo $pct; ?>%"></div></div>
+        </div>
+        <?php endforeach; ?>
+        </div>
+        <?php else: ?><div style="text-align:center;color:#94a3b8;font-size:.83rem;padding:20px 0">No data.</div><?php endif; ?>
+        </div>
     </div>
 </div>
 
+<!-- Transactions -->
+<div class="panel">
+    <div class="phead">
+        <span class="ptitle">Recent Transactions</span>
+        <a href="billing.php" class="no-print" style="font-size:.75rem;color:#1d4ed8;text-decoration:none;font-weight:500">View Billing →</a>
+    </div>
+    <table class="rt">
+        <thead><tr><th>Patient</th><th>Amount (KES)</th><th>Method</th><th>Reference</th><th>Date</th></tr></thead>
+        <tbody>
+        <?php if($recent_txns): foreach($recent_txns as $txn): ?>
+        <tr>
+            <td style="font-weight:600;color:#0f172a"><?php echo htmlspecialchars($txn['full_name']); ?></td>
+            <td class="rev-val">KES <?php echo number_format($txn['amount_paid'],2); ?></td>
+            <td><span class="mpay"><?php echo htmlspecialchars($txn['payment_method']); ?></span></td>
+            <td class="mcode"><?php echo htmlspecialchars($txn['reference_no']); ?></td>
+            <td style="color:#94a3b8;font-size:.78rem;white-space:nowrap"><?php echo date('d M Y H:i',strtotime($txn['payment_date'])); ?></td>
+        </tr>
+        <?php endforeach; else: ?>
+        <tr><td colspan="5" style="text-align:center;padding:32px;color:#94a3b8;font-size:.83rem">No transactions in this period.</td></tr>
+        <?php endif; ?>
+        </tbody>
+    </table>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-// Date picker
-flatpickr("#date_from", { dateFormat: "Y-m-d" });
-flatpickr("#date_to",   { dateFormat: "Y-m-d" });
+flatpickr("#dfrom",{dateFormat:"Y-m-d"});
+flatpickr("#dto",{dateFormat:"Y-m-d"});
 
-// --- DAILY TREND CHART ---
-const trendLabels  = <?php echo json_encode(array_column($daily_trend, 'date')); ?>;
-const trendReqs    = <?php echo json_encode(array_column($daily_trend, 'requests')); ?>;
-const trendRev     = <?php echo json_encode(array_column($daily_trend, 'revenue')); ?>;
+const tl=<?php echo json_encode(array_column($daily_trend,'date')); ?>;
+const tr2=<?php echo json_encode(array_column($daily_trend,'requests')); ?>;
+const trv=<?php echo json_encode(array_column($daily_trend,'revenue')); ?>;
 
-new Chart(document.getElementById('trendChart'), {
-    type: 'bar',
-    data: {
-        labels: trendLabels,
-        datasets: [
-            {
-                label: 'Requests',
-                data: trendReqs,
-                backgroundColor: 'rgba(30,144,255,0.7)',
-                borderRadius: 6,
-                yAxisID: 'y'
-            },
-            {
-                label: 'Revenue (KES)',
-                data: trendRev,
-                type: 'line',
-                borderColor: '#11998e',
-                backgroundColor: 'rgba(17,153,142,0.08)',
-                borderWidth: 2,
-                pointBackgroundColor: '#11998e',
-                tension: 0.4,
-                fill: true,
-                yAxisID: 'y1'
-            }
-        ]
-    },
-    options: {
-        responsive: true,
-        interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { position: 'top' } },
-        scales: {
-            y:  { position: 'left',  beginAtZero: true, title: { display: true, text: 'Requests' } },
-            y1: { position: 'right', beginAtZero: true, title: { display: true, text: 'Revenue (KES)' }, grid: { drawOnChartArea: false } }
-        }
-    }
+new Chart(document.getElementById('trendChart'),{
+    type:'bar',
+    data:{labels:tl,datasets:[
+        {label:'Requests',data:tr2,backgroundColor:'rgba(29,78,216,.7)',borderRadius:5,yAxisID:'y'},
+        {label:'Revenue (KES)',data:trv,type:'line',borderColor:'#16a34a',backgroundColor:'rgba(22,163,74,.08)',borderWidth:2,pointBackgroundColor:'#16a34a',tension:.4,fill:true,yAxisID:'y1'}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        plugins:{legend:{position:'top',labels:{font:{size:11}}}},
+        scales:{y:{position:'left',beginAtZero:true,ticks:{font:{size:10}}},y1:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},ticks:{font:{size:10}}}}}
 });
 
-// --- GENDER DONUT CHART ---
-const gLabels = <?php echo json_encode($gender_labels); ?>;
-const gCounts = <?php echo json_encode($gender_counts); ?>;
-
-new Chart(document.getElementById('genderChart'), {
-    type: 'doughnut',
-    data: {
-        labels: gLabels,
-        datasets: [{
-            data: gCounts,
-            backgroundColor: ['#1e90ff','#e91e63','#9c27b0'],
-            borderWidth: 0,
-            hoverOffset: 8
-        }]
-    },
-    options: {
-        responsive: true,
-        plugins: {
-            legend: { position: 'bottom' }
-        },
-        cutout: '65%'
-    }
+const gl=<?php echo json_encode($g_labels); ?>;
+const gc=<?php echo json_encode($g_counts); ?>;
+new Chart(document.getElementById('genderChart'),{
+    type:'doughnut',
+    data:{labels:gl,datasets:[{data:gc,backgroundColor:['#1d4ed8','#e11d48','#7c3aed'],borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{size:11}}},},cutout:'65%'}
 });
 </script>
-
 <?php include 'includes/footer.php'; ?>
