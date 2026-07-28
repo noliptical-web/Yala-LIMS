@@ -35,11 +35,11 @@ if (isset($_POST['add_test'])) {
     } else {
         if ($hasIns) {
             $stmt = $conn->prepare("INSERT INTO lab_tests
-                (test_name, category, cost, turnaround_hours, insurance_covered, insurance_cover_pct, insurance_cap_kes)
+                (test_name, test_category, cost, turnaround_hours, insurance_covered, insurance_cover_pct, insurance_cap_kes)
                 VALUES (?,?,?,?,?,?,?)");
             $stmt->bind_param("ssdiiid", $name, $cat, $cost, $turnaround, $ins_covered, $ins_pct, $ins_cap);
         } else {
-            $stmt = $conn->prepare("INSERT INTO lab_tests (test_name, category, cost, turnaround_hours) VALUES (?,?,?,?)");
+            $stmt = $conn->prepare("INSERT INTO lab_tests (test_name, test_category, cost, turnaround_hours) VALUES (?,?,?,?)");
             $stmt->bind_param("ssdi", $name, $cat, $cost, $turnaround);
         }
         if ($stmt->execute()) {
@@ -69,12 +69,12 @@ if (isset($_POST['edit_test'])) {
     } else {
         if ($hasIns) {
             $stmt = $conn->prepare("UPDATE lab_tests
-                SET test_name=?, category=?, cost=?, turnaround_hours=?,
+                SET test_name=?, test_category=?, cost=?, turnaround_hours=?,
                     insurance_covered=?, insurance_cover_pct=?, insurance_cap_kes=?
                 WHERE test_id=?");
             $stmt->bind_param("ssdiiidi", $name, $cat, $cost, $turnaround, $ins_covered, $ins_pct, $ins_cap, $id);
         } else {
-            $stmt = $conn->prepare("UPDATE lab_tests SET test_name=?, category=?, cost=?, turnaround_hours=? WHERE test_id=?");
+            $stmt = $conn->prepare("UPDATE lab_tests SET test_name=?, test_category=?, cost=?, turnaround_hours=? WHERE test_id=?");
             $stmt->bind_param("ssdii", $name, $cat, $cost, $turnaround, $id);
         }
         if ($stmt->execute()) {
@@ -106,13 +106,13 @@ if (isset($_POST['delete_test'])) {
 
 // ─── FETCH TESTS ──────────────────────────────────────────────────────────────
 if ($hasIns) {
-    $res = $conn->query("SELECT test_id, test_name, category, cost, turnaround_hours,
+    $res = $conn->query("SELECT test_id, test_name, test_category AS category, cost, turnaround_hours,
         insurance_covered, insurance_cover_pct, insurance_cap_kes
-        FROM lab_tests ORDER BY category, test_name");
+        FROM lab_tests ORDER BY test_category, test_name");
 } else {
-    $res = $conn->query("SELECT test_id, test_name, category, cost, turnaround_hours,
+    $res = $conn->query("SELECT test_id, test_name, test_category AS category, cost, turnaround_hours,
         0 AS insurance_covered, 100 AS insurance_cover_pct, 0 AS insurance_cap_kes
-        FROM lab_tests ORDER BY category, test_name");
+        FROM lab_tests ORDER BY test_category, test_name");
 }
 $tests = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
 

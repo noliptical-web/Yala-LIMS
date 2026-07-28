@@ -129,7 +129,7 @@ table.rt td{padding:10px 16px;font-size:.83rem;vertical-align:middle}
         <div class="sc-n"><?php echo $completion_rate; ?>%</div><div class="sc-l">Completion Rate</div><i class="fa-solid fa-chart-line sc-ico"></i>
     </div>
     <div class="sc" style="background:linear-gradient(135deg,#9f1239,#e11d48)">
-        <div class="sc-n">KES <?php echo number_format($total_revenue/1000,1); ?>k</div><div class="sc-l">Revenue</div><i class="fa-solid fa-sack-dollar sc-ico"></i>
+        <div class="sc-n">KES <?php echo number_format($total_revenue,0); ?></div><div class="sc-l">Revenue</div><i class="fa-solid fa-sack-dollar sc-ico"></i>
     </div>
 </div>
 

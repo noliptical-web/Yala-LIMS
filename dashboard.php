@@ -23,19 +23,19 @@ $isReception = ($role === 'Receptionist');
 $isLabTech   = ($role === 'LabTech' || $role === 'Lab Technician' || $role === 'LabTechnician');
 
 // ─── Stats ─────────────────────────────────────────────────────────────────
-$r = $conn->query("SELECT COUNT(*) FROM patients WHERE DATE(created_at)=CURDATE()");
+$r = $conn->query("SELECT COUNT(*) FROM patients WHERE DATE(registered_at)=CURDATE()");
 $patients_today = $r ? $r->fetch_row()[0] : 0;
 
-$r = $conn->query("SELECT COUNT(*) FROM payments WHERE payment_status IN ('Unpaid','Pending')");
+$r = $conn->query("SELECT COUNT(*) FROM lab_requests WHERE payment_status='Unpaid'");
 $unpaid = $r ? $r->fetch_row()[0] : 0;
 
-$r = $conn->query("SELECT COUNT(*) FROM test_requests WHERE status IN ('Pending','In Progress')");
+$r = $conn->query("SELECT COUNT(*) FROM lab_requests WHERE status IN ('Pending','In Progress')");
 $pending_tests = $r ? $r->fetch_row()[0] : 0;
 
 $r = $conn->query("SELECT COUNT(*) FROM patients");
 $total_patients = $r ? $r->fetch_row()[0] : 0;
 
-$r = $conn->query("SELECT COALESCE(SUM(total_cost),0) FROM payments WHERE payment_status='Paid' AND DATE(payment_date)=CURDATE()");
+$r = $conn->query("SELECT COALESCE(SUM(amount_paid),0) FROM payments WHERE payment_method != 'Pending' AND DATE(payment_date)=CURDATE()");
 $revenue_today = $r ? $r->fetch_row()[0] : 0;
 
 $hour      = (int)date('H');

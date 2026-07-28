@@ -8,15 +8,31 @@ define('BACKUP_DIR', __DIR__ . '/../backups/');
 if (!is_dir(BACKUP_DIR)) mkdir(BACKUP_DIR, 0750, true);
 
 $file = BACKUP_DIR . 'yala_lims_' . date('Y-m-d_His') . '.sql';
-$cmd  = "mysqldump --user=" . escapeshellarg(DB_USER)
-      . " --password=" . escapeshellarg(DB_PASS)
-      . " --host="     . escapeshellarg(DB_HOST)
-      . " "            . escapeshellarg(DB_NAME)
-      . " > "          . escapeshellarg($file) . " 2>&1";
 
-exec($cmd, $out, $code);
+$paths = [
+    'C:/xampp/mysql/bin/mysqldump.exe',
+    'mysqldump',
+    '/usr/bin/mysqldump',
+    '/usr/local/bin/mysqldump',
+];
 
-if ($code === 0 && file_exists($file) && filesize($file) > 0) {
+$worked = false;
+foreach ($paths as $mp) {
+    $cmd = escapeshellarg($mp)
+         . " --user=" . escapeshellarg(DB_USER)
+         . " --password=" . escapeshellarg(DB_PASS)
+         . " --host="     . escapeshellarg(DB_HOST)
+         . " "            . escapeshellarg(DB_NAME)
+         . " > "          . escapeshellarg($file) . " 2>&1";
+    exec($cmd, $out, $code);
+    if ($code === 0 && file_exists($file) && filesize($file) > 0) {
+        $worked = true;
+        break;
+    }
+    $out = [];
+}
+
+if ($worked) {
     $size = filesize($file); $fn = basename($file);
     $conn->query("INSERT INTO backup_log (filename,size_bytes,triggered_by) VALUES ('$fn',$size,'cron')");
     echo "[OK] Backup: $fn (" . round($size/1024) . " KB)\n";

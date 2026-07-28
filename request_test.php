@@ -23,7 +23,6 @@ if ($_SERVER["REQUEST_METHOD"]=="POST"&&isset($_POST['submit_order'])) {
                 foreach($tests as $tid){
                     $tid=intval($tid);
                     $s2->bind_param("iii",$rid,$tid,$uid); $s2->execute();
-                    // Add up cost of each test
                     $cr=$conn->query("SELECT cost FROM lab_tests WHERE test_id=$tid");
                     if($cr && $row=$cr->fetch_assoc()) $total_cost += floatval($row['cost']);
                 }
@@ -33,23 +32,44 @@ if ($_SERVER["REQUEST_METHOD"]=="POST"&&isset($_POST['submit_order'])) {
                 $sp=$conn->prepare("SELECT * FROM patients WHERE patient_id=?"); $sp->bind_param("i",$patient_id); $sp->execute();
                 $patient=$sp->get_result()->fetch_assoc(); $sp->close();
 
-                // Determine payment status for insurance patients
                 $ins_provider = $patient['insurance_provider'] ?? '';
-                $init_pay_status = !empty($ins_provider) ? 'Insurance' : 'Unpaid';
 
-                // Create the payments row so the cashier can see it
-                $pay_cols = "request_id, patient_id, total_cost, amount_paid, payment_status, payment_date";
-                $pay_vals = "?, ?, ?, 0, ?, NULL";
-                $sp2 = $conn->prepare("INSERT INTO payments ($pay_cols) VALUES ($pay_vals)");
-                if($sp2){
-                    $sp2->bind_param("iids", $rid, $patient_id, $total_cost, $init_pay_status);
-                    $sp2->execute();
-                    $sp2->close();
-                }
+                // ── INSERT into payments using YOUR ACTUAL schema ─────────────
+                // Your payments table columns (from debug):
+                //   payment_id, request_id, amount_paid, payment_method,
+                //   payment_type (enum Cash/Insurance/Split), insurer_name,
+                //   insurer_amount, patient_copay, claim_ref, reference_no,
+                //   payment_date (auto timestamp), insurance_provider,
+                //   insurance_member_no, insurance_claim_no, waiver_reason,
+                //   copay_amount, excluded_tests, received_by
+                //
+                // NO total_cost column. NO patient_id column. NO payment_status column.
+                // We store the billed amount in insurer_amount for display in billing.php.
 
-                // If insurance patient, also update lab_requests so lab can proceed
-                if(!empty($ins_provider)){
-                    $conn->query("UPDATE lab_requests SET payment_status='Insurance' WHERE request_id=$rid");
+                if (!empty($ins_provider)) {
+                    $ins_member = $patient['insurance_member_no'] ?? '';
+                    $sp2 = $conn->prepare(
+                        "INSERT INTO payments
+                            (request_id, amount_paid, payment_method, payment_type,
+                             insurer_amount, insurance_provider, insurance_member_no, received_by)
+                         VALUES (?, 0, 'Pending', 'Insurance', ?, ?, ?, ?)"
+                    );
+                    if ($sp2) {
+                        $sp2->bind_param("idsss", $rid, $total_cost, $ins_provider, $ins_member, $doctor_name);
+                        $sp2->execute(); $sp2->close();
+                    }
+                    // Insurance patients can proceed immediately (workbench checks if patient has insurance_provider)
+                } else {
+                    $sp2 = $conn->prepare(
+                        "INSERT INTO payments
+                            (request_id, amount_paid, payment_method, payment_type,
+                             insurer_amount, received_by)
+                         VALUES (?, 0, 'Pending', 'Cash', ?, ?)"
+                    );
+                    if ($sp2) {
+                        $sp2->bind_param("ids", $rid, $total_cost, $doctor_name);
+                        $sp2->execute(); $sp2->close();
+                    }
                 }
 
                 $pn=$conn->real_escape_string($patient['full_name']??"#$patient_id");
@@ -69,16 +89,28 @@ if (isset($_GET['search_opd'])&&!isset($_POST['submit_order'])) {
     $stmt->close();
 }
 
-$tests_raw=$conn->query("SELECT * FROM lab_tests ORDER BY test_category,test_name");
+// Detect category column name
+$cat_col = 'category';
+$chk=$conn->query("SELECT COUNT(*) as n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='lab_tests' AND COLUMN_NAME='test_category'");
+if ($chk && $chk->fetch_assoc()['n'] > 0) $cat_col = 'test_category';
+
+$tests_raw=$conn->query("SELECT *, $cat_col AS cat_label FROM lab_tests ORDER BY $cat_col, test_name");
 $categories=[];
-if($tests_raw) while($r=$tests_raw->fetch_assoc()) $categories[$r['test_category']][]=$r;
+if($tests_raw) while($r=$tests_raw->fetch_assoc()) $categories[$r['cat_label']][]=$r;
 
 $prev_history=[];
+$flags=[];
 if($patient){
+    // Fetch active clinical flags
+    $sf=$conn->prepare("SELECT * FROM clinical_flags WHERE patient_id=? AND is_resolved=0 ORDER BY FIELD(flag_type,'Critical','Allergy','Warning','Info'), created_at DESC");
+    $sf->bind_param("i",$patient['patient_id']); $sf->execute(); $flags=$sf->get_result()->fetch_all(MYSQLI_ASSOC); $sf->close();
+
     $hs=$conn->prepare("SELECT r.request_id,r.request_date,r.status,r.requested_by FROM lab_requests r WHERE r.patient_id=? AND r.status='Completed' ORDER BY r.request_date DESC LIMIT 3");
     $hs->bind_param("i",$patient['patient_id']); $hs->execute(); $hr=$hs->get_result(); $hs->close();
     while($h=$hr->fetch_assoc()){
-        $ts=$conn->prepare("SELECT t.test_name,t.units,t.normal_range,tr.result_value FROM test_results tr JOIN lab_tests t ON tr.test_id=t.test_id WHERE tr.request_id=? AND tr.result_value!='Pending' ORDER BY t.test_name");
+        $nrc=$conn->query("SELECT COUNT(*) as n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='lab_tests' AND COLUMN_NAME='normal_range'");
+        $nr_col = ($nrc && $nrc->fetch_assoc()['n']>0) ? 't.normal_range' : "'' AS normal_range";
+        $ts=$conn->prepare("SELECT t.test_name, t.units, $nr_col, tr.result_value FROM test_results tr JOIN lab_tests t ON tr.test_id=t.test_id WHERE tr.request_id=? AND tr.result_value!='Pending' ORDER BY t.test_name");
         $ts->bind_param("i",$h['request_id']); $ts->execute(); $h['tests']=$ts->get_result()->fetch_all(MYSQLI_ASSOC); $ts->close();
         $prev_history[]=$h;
     }
@@ -237,6 +269,26 @@ table.vt td{padding:6px 13px;border-top:1px solid #f9fafb;color:#374151}
         <span class="mbt doc"><i class="fa-solid fa-user-doctor" style="margin-right:4px"></i>Dr. <?php echo htmlspecialchars($doctor_name); ?></span>
     </div>
 
+    <?php if(!empty($flags)): ?>
+    <div style="padding: 16px 20px 0;">
+        <?php foreach($flags as $flag): 
+            $f_type = htmlspecialchars($flag['flag_type']);
+            $f_note = htmlspecialchars($flag['flag_note']);
+            $f_by = htmlspecialchars($flag['flagged_by']);
+            $alert_cls = ($f_type === 'Critical' || $f_type === 'Allergy') ? 'danger' : 'warning';
+            $icon = ($f_type === 'Critical' || $f_type === 'Allergy') ? 'fa-triangle-exclamation' : 'fa-circle-info';
+        ?>
+        <div class="alert alert-<?= $alert_cls ?> d-flex align-items-start gap-2 mb-2 p-3 small border-0 shadow-sm" style="border-radius:10px;">
+            <i class="fa-solid <?= $icon ?> fa-lg mt-1 text-<?= $alert_cls ?>"></i>
+            <div>
+                <strong><?= $f_type ?> Alert (by <?= $f_by ?>):</strong>
+                <div><?= $f_note ?></div>
+            </div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+
     <?php if(!empty($prev_history)): ?>
     <div class="hsec">
         <div class="hshd">
@@ -262,7 +314,7 @@ table.vt td{padding:6px 13px;border-top:1px solid #f9fafb;color:#374151}
                         $ab=stripos($t['result_value'],'pos')!==false||stripos($t['result_value'],'high')!==false||stripos($t['result_value'],'elev')!==false;
                     ?>
                     <tr>
-                        <td><?php echo htmlspecialchars($t['test_name']); ?><?php if($t['units']): ?> <small style="color:#94a3b8">(<?php echo $t['units']; ?>)</small><?php endif; ?></td>
+                        <td><?php echo htmlspecialchars($t['test_name']); ?><?php if(!empty($t['units'])): ?> <small style="color:#94a3b8">(<?php echo $t['units']; ?>)</small><?php endif; ?></td>
                         <td class="<?php echo $ab?'ra':'rn2'; ?>"><?php if($ab): ?><i class="fa-solid fa-triangle-exclamation" style="font-size:.65rem;margin-right:3px"></i><?php endif; ?><?php echo htmlspecialchars($t['result_value']); ?></td>
                         <td style="color:#94a3b8;font-size:.73rem"><?php echo htmlspecialchars($t['normal_range']?:'—'); ?></td>
                     </tr>
@@ -280,8 +332,14 @@ table.vt td{padding:6px 13px;border-top:1px solid #f9fafb;color:#374151}
     <form method="post" action="request_test.php" id="labOrderForm">
     <input type="hidden" name="patient_id" value="<?php echo $patient['patient_id']; ?>">
     <div class="osec">
+        <?php if(empty($categories)): ?>
+        <div style="text-align:center;padding:30px;color:#94a3b8;font-size:.85rem">
+            <i class="fa-solid fa-flask fa-2x mb-2 d-block"></i>
+            No tests configured. Ask Admin to add tests in the Test Catalogue.
+        </div>
+        <?php else: ?>
         <?php foreach($categories as $cat=>$tests): ?>
-        <div class="catlbl"><i class="fa-solid fa-tag" style="font-size:.58rem"></i><?php echo htmlspecialchars($cat); ?></div>
+        <div class="catlbl"><i class="fa-solid fa-tag" style="font-size:.58rem"></i><?php echo htmlspecialchars($cat ?: 'General'); ?></div>
         <div class="tgrid">
             <?php foreach($tests as $test): ?>
             <div class="ttile" onclick="tg('t<?php echo $test['test_id']; ?>',<?php echo (float)$test['cost']; ?>)">
@@ -293,6 +351,7 @@ table.vt td{padding:6px 13px;border-top:1px solid #f9fafb;color:#374151}
             <?php endforeach; ?>
         </div>
         <?php endforeach; ?>
+        <?php endif; ?>
     </div>
     <div class="ofoot">
         <div class="ticker">

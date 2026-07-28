@@ -15,6 +15,17 @@ function send_sms(mysqli $conn, int $request_id, string $phone, string $message)
     if (str_starts_with($phone, '0')) $phone = '+254' . substr($phone, 1);
     if (!str_starts_with($phone, '+')) $phone = '+' . $phone;
 
+    // Simulation fallback if API keys are default placeholders
+    if (AT_API_KEY === 'YOUR_AFRICASTALKING_API_KEY' || AT_USERNAME === 'YOUR_AT_USERNAME') {
+        $status = 'simulated';
+        $ref    = 'SIM-AT-' . strtoupper(substr(md5(uniqid(mt_rand(), true)), 0, 10));
+        $msg_e  = $conn->real_escape_string(substr($message, 0, 500));
+        $ph_e   = $conn->real_escape_string($phone);
+        $conn->query("INSERT INTO sms_log (request_id,phone,message,status,provider_ref,sent_at)
+                      VALUES ($request_id,'$ph_e','$msg_e','$status','$ref',NOW())");
+        return true;
+    }
+
     $payload = http_build_query([
         'username' => AT_USERNAME,
         'to'       => $phone,

@@ -12,88 +12,75 @@ if (!isset($_SESSION['loggedin']) || !in_array($_SESSION['role'], $allowed)) {
 $myId    = intval($_SESSION['id'] ?? 0);
 $success = $error = "";
 
-// ── Detect which optional columns exist ──────────────────────────────────────
-function bil_col($conn, $col) {
-    $r = $conn->query("SELECT COUNT(*) as n FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='payments' AND COLUMN_NAME='$col'");
-    return $r && $r->fetch_assoc()['n'] > 0;
-}
-$has_payment_type  = bil_col($conn, 'payment_type');
-$has_reference_no  = bil_col($conn, 'reference_no');
-$has_insurer_name  = bil_col($conn, 'insurer_name');
-$has_claim_ref     = bil_col($conn, 'claim_ref');
-$has_patient_copay = bil_col($conn, 'patient_copay');
-$has_waiver_reason = bil_col($conn, 'waiver_reason');
-$has_received_by   = bil_col($conn, 'received_by');
-
 // ── RECORD PAYMENT ────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['record_payment'])) {
     csrf_verify();
 
-    $paymentId     = intval($_POST['payment_id']    ?? 0);
-    $requestId     = intval($_POST['request_id']    ?? 0);
-    $method        = trim($_POST['payment_method']  ?? '');
-    $mpesaCode     = trim($_POST['mpesa_code']      ?? '');
-    $cashRef       = trim($_POST['cash_ref']        ?? '');
-    $insurerName   = trim($_POST['insurer_name']    ?? '');
-    $memberNo      = trim($_POST['insurance_member_no'] ?? '');
-    $claimRef      = trim($_POST['claim_ref']       ?? '');
-    $copay         = floatval($_POST['copay_amount'] ?? 0);
-    $amountPaid    = floatval($_POST['amount_paid']  ?? 0);
-    $waiverReason  = trim($_POST['waiver_reason']   ?? '');
-    $waiverOfficer = trim($_POST['waiver_officer']  ?? '');
-    $receivedBy    = $_SESSION['full_name'] ?? 'Cashier';
+    $paymentId   = intval($_POST['payment_id']   ?? 0);
+    $requestId   = intval($_POST['request_id']   ?? 0);
+    $method      = trim($_POST['payment_method'] ?? '');
+    $amountPaid  = floatval($_POST['amount_paid'] ?? 0);
+    $mpesaCode   = trim($_POST['mpesa_code']     ?? '');
+    $cashRef     = trim($_POST['cash_ref']       ?? '');
+    $insurerName = trim($_POST['insurer_name']   ?? '');
+    $memberNo    = trim($_POST['insurance_member_no'] ?? '');
+    $claimRef    = trim($_POST['claim_ref']      ?? '');
+    $copay       = floatval($_POST['copay_amount'] ?? 0);
+    $waiverReason  = trim($_POST['waiver_reason']  ?? '');
+    $waiverOfficer = trim($_POST['waiver_officer'] ?? '');
+    $receivedBy  = $_SESSION['full_name'] ?? 'Cashier';
 
     if (!$paymentId || !$method) {
         $error = "Missing payment ID or method.";
     } else {
+        // Map method to payment_type enum (Cash / Insurance / Split)
+        $pay_type = 'Cash';
+        if ($method === 'insurance') $pay_type = 'Insurance';
+        if ($method === 'waiver')    $pay_type = 'Cash'; // waiver clears as Cash with 0 amount
 
-        // ── Build UPDATE payments ─────────────────────────────────────────────
-        $setParts = ["payment_status = 'Paid'", "payment_date = NOW()", "amount_paid = ?"];
-        $types    = "d";
-        $vals     = [$amountPaid];
+        $ref = '';
+        if ($method === 'mpesa')    $ref = $mpesaCode;
+        if ($method === 'cash')     $ref = $cashRef;
+        if ($method === 'insurance') $ref = $claimRef;
 
-        if ($has_payment_type) {
-            $setParts[] = "payment_type = ?";   $types .= "s"; $vals[] = $method;
-        }
-        if ($method === 'mpesa' && $has_reference_no) {
-            $setParts[] = "reference_no = ?";   $types .= "s"; $vals[] = $mpesaCode;
-        }
-        if ($method === 'cash' && $has_reference_no) {
-            $setParts[] = "reference_no = ?";   $types .= "s"; $vals[] = $cashRef;
-        }
-        if ($method === 'insurance') {
-            if ($has_insurer_name)  { $setParts[] = "insurer_name = ?";  $types .= "s"; $vals[] = $insurerName; }
-            if ($has_claim_ref)     { $setParts[] = "claim_ref = ?";     $types .= "s"; $vals[] = $claimRef; }
-            if ($has_patient_copay) { $setParts[] = "patient_copay = ?"; $types .= "d"; $vals[] = $copay; }
-        }
-        if ($method === 'waiver') {
-            if ($has_waiver_reason) { $setParts[] = "waiver_reason = ?"; $types .= "s"; $vals[] = $waiverReason; }
-            // Waiver counts as amount_paid = 0
-            $vals[0] = 0;
-        }
-        if ($has_received_by) {
-            $setParts[] = "received_by = ?";    $types .= "s"; $vals[] = $receivedBy;
-        }
+        $actual_amount = ($method === 'waiver') ? 0 : $amountPaid;
 
-        $types .= "i"; $vals[] = $paymentId;
-        $sql  = "UPDATE payments SET " . implode(", ", $setParts) . " WHERE payment_id = ?";
+        $sql = "UPDATE payments SET
+                    amount_paid       = ?,
+                    payment_method    = ?,
+                    payment_type      = ?,
+                    reference_no      = ?,
+                    insurer_name      = ?,
+                    insurance_member_no = ?,
+                    insurance_claim_no  = ?,
+                    patient_copay     = ?,
+                    copay_amount      = ?,
+                    waiver_reason     = ?,
+                    received_by       = ?,
+                    payment_date      = CURRENT_TIMESTAMP
+                WHERE payment_id = ?";
+
         $stmt = $conn->prepare($sql);
-
         if (!$stmt) {
             $error = "Query error: " . $conn->error;
         } else {
-            $stmt->bind_param($types, ...$vals);
+            $stmt->bind_param(
+                "dssssssddssi",
+                $actual_amount, $method, $pay_type, $ref,
+                $insurerName, $memberNo, $claimRef,
+                $copay, $copay,
+                $waiverReason, $receivedBy,
+                $paymentId
+            );
             if ($stmt->execute()) {
-                // ── CRITICAL: also update lab_requests.payment_status ─────────
-                // This unlocks the lab tech to enter results
+                // Mark lab_request as paid so lab can proceed
                 if ($requestId > 0) {
-                    $conn->query("UPDATE lab_requests SET payment_status = 'Paid' WHERE request_id = $requestId");
+                    $conn->query("UPDATE lab_requests SET payment_status='Paid' WHERE request_id=$requestId");
                 }
-                audit_log($conn, 'record_payment', 'payments', $paymentId, "Payment ID $paymentId via $method");
+                audit_log($conn, 'record_payment', 'payments', $paymentId, "Req #$requestId via $method KES $actual_amount");
                 $success = "Payment recorded successfully.";
             } else {
-                $error = "Save failed: " . $conn->error;
+                $error = "Save failed: " . $stmt->error;
             }
             $stmt->close();
         }
@@ -101,57 +88,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['record_payment'])) {
 }
 
 // ── FETCH PENDING BILLS ───────────────────────────────────────────────────────
-// Uses lab_requests (the ACTUAL table), not test_requests
-// Also pulls insurance_provider from patients if the column exists
-$has_ins_provider = false;
-$r = $conn->query("SELECT COUNT(*) as n FROM information_schema.COLUMNS
-    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='patients' AND COLUMN_NAME='insurance_provider'");
-if ($r && $r->fetch_assoc()['n'] > 0) $has_ins_provider = true;
+// Your payments table has NO payment_status column.
+// "Pending" bills = payment_method = 'Pending' (set when request is created)
+// OR amount_paid = 0 AND payment_date is recent (auto-inserted timestamp)
+// We identify unpaid rows by payment_method = 'Pending'
+// which is what request_test.php now sets on insert.
+//
+// For existing old rows that are missing (requests 25,26,27,28),
+// they show as MISSING in debug — run fix_missing_payments.php first.
 
-$ins_col = $has_ins_provider ? "pt.insurance_provider" : "'' AS insurance_provider";
-
-// Fetch tests for each request via test_results + lab_tests
-$sql = "SELECT
-    pay.payment_id,
-    pay.total_cost,
-    pay.payment_status,
-    pay.request_id,
-    pt.patient_id,
-    pt.full_name,
-    pt.age,
-    pt.gender,
-    $ins_col,
-    r.request_date,
-    r.requested_by
-FROM payments pay
-JOIN lab_requests r  ON pay.request_id  = r.request_id
-JOIN patients    pt  ON r.patient_id    = pt.patient_id
-WHERE pay.payment_status IN ('Unpaid', 'Insurance')
-ORDER BY r.request_date DESC";
+$sql = "
+    SELECT
+        pay.payment_id,
+        pay.request_id,
+        pay.insurer_amount   AS total_cost,
+        pay.payment_method,
+        pay.payment_type,
+        pay.insurance_provider,
+        pay.insurance_member_no,
+        pay.payment_date,
+        pt.patient_id,
+        pt.full_name,
+        pt.age,
+        pt.gender,
+        r.request_date,
+        r.requested_by,
+        r.status             AS req_status
+    FROM payments pay
+    JOIN lab_requests r  ON pay.request_id  = r.request_id
+    JOIN patients     pt ON r.patient_id    = pt.patient_id
+    WHERE pay.payment_method = 'Pending'
+    ORDER BY r.request_date DESC
+";
 
 $res   = $conn->query($sql);
 $bills = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
 
-// For each bill, get the tests ordered
+// For each bill fetch its test names
 foreach ($bills as &$b) {
     $rid = intval($b['request_id']);
     $tr  = $conn->query("SELECT t.test_name, t.cost
         FROM test_results tr
         JOIN lab_tests t ON tr.test_id = t.test_id
         WHERE tr.request_id = $rid");
-    $b['tests']     = [];
+    $b['tests']      = [];
     $b['test_names'] = [];
-    if ($tr) {
-        while ($row = $tr->fetch_assoc()) {
-            $b['tests'][]      = $row;
-            $b['test_names'][] = $row['test_name'];
-        }
+    if ($tr) while ($row = $tr->fetch_assoc()) {
+        $b['tests'][]      = $row;
+        $b['test_names'][] = $row['test_name'];
     }
     $b['tests_str'] = implode(', ', $b['test_names']);
 }
 unset($b);
 
-// ── Insurance providers for dropdown ─────────────────────────────────────────
+// ── Insurance providers ───────────────────────────────────────────────────────
 $providers = [];
 $pr = $conn->query("SELECT name FROM insurance_providers WHERE active=1 ORDER BY name");
 if ($pr) while ($row = $pr->fetch_assoc()) $providers[] = $row['name'];
@@ -173,32 +163,24 @@ include 'includes/header.php';
 .pay-tab     { flex: 1; padding: 9px 4px; text-align: center; font-size: .82rem; font-weight: 600;
                cursor: pointer; border: none; background: #f8f9fa; color: #6c757d; transition: all .15s; }
 .pay-tab.active { background: #0d6efd; color: #fff; }
-.pay-panel      { display: none; }
+.pay-panel   { display: none; }
 .pay-panel.active { display: block; }
-.patient-banner {
-    background: linear-gradient(135deg, #0f172a, #1d4ed8);
-    color: #fff; border-radius: 10px; padding: 14px 18px; margin-bottom: 18px;
-}
+.patient-banner { background: linear-gradient(135deg, #0f172a, #1d4ed8);
+    color: #fff; border-radius: 10px; padding: 14px 18px; margin-bottom: 18px; }
 .pb-name   { font-weight: 700; font-size: 1rem; }
 .pb-meta   { font-size: .82rem; opacity: .85; margin-top: 2px; }
 .pb-amount { font-size: 1.4rem; font-weight: 700; margin-top: 6px; }
 .pb-tests  { font-size: .78rem; opacity: .75; margin-top: 4px; }
-.ins-notice {
-    background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px;
-    padding: 10px 14px; margin-bottom: 14px; font-size: .83rem; color: #166534;
-}
-.ins-breakdown {
-    background: #faf5ff; border: 1px solid #e9d5ff;
-    border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;
-}
+.ins-notice { background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 14px; font-size: .83rem; color: #166534; }
+.ins-breakdown { background: #faf5ff; border: 1px solid #e9d5ff;
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
 .ins-row { display: flex; justify-content: space-between; font-size: .85rem;
-           color: #4c1d95; padding: 4px 0; }
+    color: #4c1d95; padding: 4px 0; }
 .ins-row.total { font-weight: 700; border-top: 1px solid #d8b4fe;
-                 margin-top: 6px; padding-top: 6px; }
-.paybill-info {
-    background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;
-    padding: 14px; margin-bottom: 14px; font-size: .85rem; color: #166534;
-}
+    margin-top: 6px; padding-top: 6px; }
+.paybill-info { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;
+    padding: 14px; margin-bottom: 14px; font-size: .85rem; color: #166534; }
 .paybill-info .code { font-size: 1.3rem; font-weight: 700; letter-spacing: .05em; }
 </style>
 
@@ -244,7 +226,7 @@ include 'includes/header.php';
             </thead>
             <tbody>
             <?php foreach ($bills as $b):
-                $isIns = !empty($b['insurance_provider']);
+                $isIns = !empty($b['insurance_provider']) || $b['payment_type'] === 'Insurance';
             ?>
                 <tr>
                     <td>
@@ -252,17 +234,14 @@ include 'includes/header.php';
                         <small class="text-muted">
                             <?= htmlspecialchars($b['gender'] ?? '') ?>
                             <?php if (!empty($b['age'])): ?>&bull; <?= $b['age'] ?>y<?php endif; ?>
-                            &bull; OPD #<?= htmlspecialchars($b['patient_id']) ?>
                         </small>
                         <?php if ($isIns): ?>
                         <br><span class="ins-badge mt-1 d-inline-block">
-                            <i class="fa-solid fa-hospital me-1"></i><?= htmlspecialchars($b['insurance_provider']) ?>
+                            <i class="fa-solid fa-hospital me-1"></i><?= htmlspecialchars($b['insurance_provider'] ?: 'Insurance') ?>
                         </span>
                         <?php endif; ?>
                     </td>
-                    <td>
-                        <small class="text-muted"><?= htmlspecialchars($b['tests_str'] ?: '—') ?></small>
-                    </td>
+                    <td><small class="text-muted"><?= htmlspecialchars($b['tests_str'] ?: '—') ?></small></td>
                     <td><small><?= date('d M Y', strtotime($b['request_date'])) ?></small></td>
                     <td>
                         <?php if ($isIns): ?>
@@ -305,7 +284,6 @@ include 'includes/header.php';
         <input type="hidden" name="request_id"  id="mReqId">
         <input type="hidden" name="amount_paid" id="mAmountPaid">
 
-        <!-- Patient summary banner -->
         <div class="patient-banner">
             <div class="pb-name"   id="mName"></div>
             <div class="pb-meta"   id="mMeta"></div>
@@ -313,14 +291,11 @@ include 'includes/header.php';
             <div class="pb-tests"  id="mTests"></div>
         </div>
 
-        <!-- Insurance notice (shown only for insurance patients) -->
         <div class="ins-notice d-none" id="insNotice">
             <i class="fa-solid fa-hospital me-2"></i>
             <strong id="insNoticeName"></strong> — insurance patient.
-            The insurer will be billed. Collect any copay from the patient below.
         </div>
 
-        <!-- Payment method tabs -->
         <div class="pay-tabs">
             <button type="button" class="pay-tab active" onclick="switchTab('mpesa',this)">
                 <i class="fa-solid fa-mobile-screen me-1"></i>M-Pesa
@@ -337,7 +312,7 @@ include 'includes/header.php';
         </div>
         <input type="hidden" name="payment_method" id="methodField" value="mpesa">
 
-        <!-- M-PESA panel -->
+        <!-- M-PESA -->
         <div class="pay-panel active" id="panel-mpesa">
             <div class="paybill-info">
                 <p class="fw-semibold mb-1">Instruct patient to pay via M-Pesa:</p>
@@ -356,7 +331,7 @@ include 'includes/header.php';
             </div>
         </div>
 
-        <!-- CASH panel -->
+        <!-- CASH -->
         <div class="pay-panel" id="panel-cash">
             <div class="mb-3">
                 <label class="form-label small fw-semibold">Receipt / Reference No.</label>
@@ -364,12 +339,11 @@ include 'includes/header.php';
             </div>
         </div>
 
-        <!-- INSURANCE panel -->
+        <!-- INSURANCE -->
         <div class="pay-panel" id="panel-insurance">
-            <!-- Coverage breakdown -->
             <div class="ins-breakdown" id="insBreakdown">
                 <div class="ins-row"><span>Total Bill</span><span id="ibTotal"></span></div>
-                <div class="ins-row"><span>Insurer Pays (estimate)</span><span id="ibCover"></span></div>
+                <div class="ins-row"><span>Insurer Pays (est. 80%)</span><span id="ibCover"></span></div>
                 <div class="ins-row total"><span>Patient Copay</span><span id="ibCopay"></span></div>
             </div>
             <div class="mb-3">
@@ -383,8 +357,7 @@ include 'includes/header.php';
             </div>
             <div class="mb-3">
                 <label class="form-label small fw-semibold">Member / Card Number</label>
-                <input name="insurance_member_no" id="memberNoField" class="form-control"
-                    placeholder="e.g. SHA-1234567890">
+                <input name="insurance_member_no" id="memberNoField" class="form-control" placeholder="e.g. SHA-1234567890">
             </div>
             <div class="mb-3">
                 <label class="form-label small fw-semibold">Pre-auth / Claim Reference</label>
@@ -392,12 +365,11 @@ include 'includes/header.php';
             </div>
             <div class="mb-3">
                 <label class="form-label small fw-semibold">Copay Collected from Patient (KES)</label>
-                <input name="copay_amount" id="copayField" type="number"
-                    step="0.01" min="0" value="0" class="form-control">
+                <input name="copay_amount" id="copayField" type="number" step="0.01" min="0" value="0" class="form-control">
             </div>
         </div>
 
-        <!-- WAIVER panel -->
+        <!-- WAIVER -->
         <div class="pay-panel" id="panel-waiver">
             <div class="alert alert-warning small">
                 <i class="fa-solid fa-triangle-exclamation me-1"></i>
@@ -405,13 +377,11 @@ include 'includes/header.php';
             </div>
             <div class="mb-3">
                 <label class="form-label small fw-semibold">Reason for Waiver</label>
-                <textarea name="waiver_reason" class="form-control" rows="3"
-                    placeholder="State the reason clearly…"></textarea>
+                <textarea name="waiver_reason" class="form-control" rows="3" placeholder="State the reason clearly…"></textarea>
             </div>
             <div class="mb-3">
                 <label class="form-label small fw-semibold">Authorising Officer</label>
-                <input name="waiver_officer" class="form-control"
-                    placeholder="Full name and designation">
+                <input name="waiver_officer" class="form-control" placeholder="Full name and designation">
             </div>
         </div>
     </div>
@@ -427,57 +397,42 @@ include 'includes/header.php';
 </div>
 
 <script>
-const INS_COVER_PCT = 0.80; // default 80% insurer coverage estimate
-
 function openPay(b) {
-    document.getElementById('mPayId').value       = b.payment_id;
-    document.getElementById('mReqId').value       = b.request_id;
-    document.getElementById('mAmountPaid').value  = b.total_cost;
-    document.getElementById('mName').textContent  = b.full_name;
-    document.getElementById('mMeta').textContent  =
-        (b.gender || '') + (b.age ? ' · ' + b.age + 'y' : '') + ' · OPD #' + b.patient_id;
+    document.getElementById('mPayId').value      = b.payment_id;
+    document.getElementById('mReqId').value      = b.request_id;
+    document.getElementById('mAmountPaid').value = b.total_cost;
+    document.getElementById('mName').textContent = b.full_name;
+    document.getElementById('mMeta').textContent =
+        (b.gender || '') + (b.age ? ' · ' + b.age + 'y' : '');
     document.getElementById('mAmount').textContent = 'KES ' + parseFloat(b.total_cost).toFixed(2);
     document.getElementById('mTests').textContent  = b.tests_str || '';
     document.getElementById('mpesaCode').value     = '';
 
-    const isIns = b.insurance_provider && b.insurance_provider !== '';
-
-    // Insurance notice
+    const isIns = b.payment_type === 'Insurance' || (b.insurance_provider && b.insurance_provider !== '');
     const notice = document.getElementById('insNotice');
+
     if (isIns) {
         notice.classList.remove('d-none');
-        document.getElementById('insNoticeName').textContent = b.insurance_provider;
-    } else {
-        notice.classList.add('d-none');
-    }
+        document.getElementById('insNoticeName').textContent = b.insurance_provider || 'Insurance';
+        switchTab('insurance', document.querySelector('.pay-tab:nth-child(3)'));
 
-    if (isIns) {
-        // Auto-switch to insurance tab
-        const insBtn = document.querySelector('.pay-tab:nth-child(3)');
-        switchTab('insurance', insBtn);
-
-        // Pre-select the provider in dropdown
         const sel = document.getElementById('insurerSelect');
         for (let o of sel.options) {
             if (o.value === b.insurance_provider) { sel.value = o.value; break; }
         }
-
-        // Pre-fill member number if available
         if (b.insurance_member_no) {
             document.getElementById('memberNoField').value = b.insurance_member_no;
         }
-
-        // Calculate coverage breakdown
         const total = parseFloat(b.total_cost);
-        const cover = Math.round(total * INS_COVER_PCT * 100) / 100;
+        const cover = Math.round(total * 0.80 * 100) / 100;
         const copay = Math.round((total - cover) * 100) / 100;
         document.getElementById('ibTotal').textContent  = 'KES ' + total.toFixed(2);
         document.getElementById('ibCover').textContent  = 'KES ' + cover.toFixed(2);
         document.getElementById('ibCopay').textContent  = 'KES ' + copay.toFixed(2);
         document.getElementById('copayField').value     = copay.toFixed(2);
         document.getElementById('mAmountPaid').value    = copay.toFixed(2);
-
     } else {
+        notice.classList.add('d-none');
         switchTab('mpesa', document.querySelector('.pay-tab:nth-child(1)'));
     }
 
