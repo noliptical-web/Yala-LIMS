@@ -239,6 +239,31 @@ include 'includes/header.php';
             <div class="mod-desc">Daily fridge temps, analyzer calibrations (ISO 15189)</div>
         </a>
     </div>
+    <div class="col-6 col-md-4 col-lg-3">
+        <a href="blood_bank.php" class="mod-card">
+            <div class="mod-icon">🩸</div>
+            <div class="mod-title">Blood Bank &amp; Transfusion</div>
+            <div class="mod-desc">ABO/Rh inventory, crossmatching &amp; donor screening</div>
+        </a>
+    </div>
+    <div class="col-6 col-md-4 col-lg-3">
+        <a href="sample_rejection.php" class="mod-card">
+            <div class="mod-icon">⚠️</div>
+            <div class="mod-title">Specimen Rejections</div>
+            <div class="mod-desc">Phlebotomy QA, rejection rate KPI &amp; redraw register</div>
+        </a>
+    </div>
+    <?php endif; ?>
+
+    <!-- Specimen Rejections for Doctor (Review redraws) -->
+    <?php if ($isDoctor && !$isAdmin && !$isLabTech): ?>
+    <div class="col-6 col-md-4 col-lg-3">
+        <a href="sample_rejection.php" class="mod-card">
+            <div class="mod-icon">⚠️</div>
+            <div class="mod-title">Specimen Rejections</div>
+            <div class="mod-desc">Track rejected specimens, phlebotomy redraws &amp; QA</div>
+        </a>
+    </div>
     <?php endif; ?>
 
     <!-- Reports: Admin, Doctor ONLY -->

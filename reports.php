@@ -21,7 +21,11 @@ $stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $total_pending=$s
 $stmt=$conn->prepare("SELECT COALESCE(SUM(amount_paid),0) as t FROM payments WHERE DATE(payment_date) BETWEEN ? AND ?");
 $stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $total_revenue=$stmt->get_result()->fetch_assoc()['t']; $stmt->close();
 
+$stmt=$conn->prepare("SELECT COUNT(*) as c FROM sample_rejections WHERE DATE(rejection_date) BETWEEN ? AND ?");
+$stmt->bind_param("ss",$date_from,$date_to); $stmt->execute(); $total_rejections=$stmt->get_result()->fetch_assoc()['c']; $stmt->close();
+
 $completion_rate=$total_requests>0?round(($total_completed/$total_requests)*100):0;
+$rejection_rate=$total_requests>0?round(($total_rejections/$total_requests)*100,1):0;
 
 $daily_trend=[];
 for($i=6;$i>=0;$i--){
@@ -65,7 +69,7 @@ include 'includes/header.php';
 .btn-quick{background:#fff;color:#64748b;border:1.5px solid #e2e8f0;border-radius:7px;padding:9px 12px;font-size:.78rem;font-family:'DM Sans',sans-serif;cursor:pointer;text-decoration:none;align-self:flex-end;transition:all .15s;display:inline-block}
 .btn-quick:hover{border-color:#3b82f6;color:#1d4ed8}
 .btn-print{background:#fff;color:#64748b;border:1.5px solid #e2e8f0;border-radius:7px;padding:9px 12px;font-size:.78rem;font-family:'DM Sans',sans-serif;cursor:pointer;align-self:flex-end}
-.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:22px}
+.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:22px}
 .sc{border-radius:12px;padding:14px 16px;color:#fff;position:relative;overflow:hidden}
 .sc-n{font-size:1.6rem;font-weight:700;font-family:'DM Serif Display',serif;line-height:1;margin-bottom:2px}
 .sc-l{font-size:.68rem;opacity:.85;font-weight:500}
@@ -135,6 +139,9 @@ table.rt td{padding:10px 16px;font-size:.83rem;vertical-align:middle}
     </div>
     <div class="sc" style="background:linear-gradient(135deg,#9f1239,#e11d48)">
         <div class="sc-n">KES <?php echo number_format($total_revenue,0); ?></div><div class="sc-l">Revenue</div><i class="fa-solid fa-sack-dollar sc-ico"></i>
+    </div>
+    <div class="sc" style="background:linear-gradient(135deg,#7f1d1d,#b91c1c)">
+        <div class="sc-n"><?php echo $total_rejections; ?> (<?php echo $rejection_rate; ?>%)</div><div class="sc-l">Rejections (Target &lt;2%)</div><i class="fa-solid fa-ban sc-ico"></i>
     </div>
 </div>
 

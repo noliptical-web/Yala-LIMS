@@ -115,7 +115,8 @@ include 'includes/header.php';
 .status-pill{font-size:.67rem;font-weight:700;border-radius:20px;padding:3px 9px}
 .sp-Completed{background:#dcfce7;color:#166534}
 .sp-Pending{background:#fef3c7;color:#92400e}
-.sp-Progress{background:#dbeafe;color:#1d4ed8}
+.sp-Progress,.sp-In_Progress{background:#dbeafe;color:#1d4ed8}
+.sp-Rejected{background:#fee2e2;color:#991b1b}
 .pay-pill{font-size:.67rem;font-weight:700;border-radius:20px;padding:3px 9px}
 .pp-Paid{background:#dcfce7;color:#166534}
 .pp-Unpaid{background:#fee2e2;color:#991b1b}

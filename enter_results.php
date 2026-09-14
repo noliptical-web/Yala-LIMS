@@ -22,6 +22,11 @@ if (isset($_GET['saved']) && intval($_GET['saved']) > 0) {
     }
 }
 
+if (isset($_GET['rejected']) && intval($_GET['rejected']) > 0) {
+    $rej_id = intval($_GET['rejected']);
+    $error = "⚠️ SPECIMEN REJECTED: Request #$rej_id specimen was rejected and marked for recollection. Phlebotomy & Clinician alerted.";
+}
+
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['save_results'])) {
     csrf_verify();
     $req_id = intval($_POST['request_id'] ?? 0);
@@ -122,6 +127,63 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['save_results'])) {
             $error = "Error: " . $e->getMessage();
         }
     } else { $error = "No result data found."; }
+}
+
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reject_sample'])) {
+    csrf_verify();
+    $req_id  = intval($_POST['request_id'] ?? 0);
+    $reason  = trim($_POST['rejection_reason'] ?? '');
+    $sample  = trim($_POST['sample_type'] ?? 'Whole Blood (EDTA)');
+    $comment = trim($_POST['comments'] ?? '');
+    $tech    = $_SESSION['full_name'] ?? 'Lab Technologist';
+
+    if ($req_id > 0 && !empty($reason)) {
+        $conn->begin_transaction();
+        try {
+            $stmt_pat = $conn->prepare("SELECT p.patient_id, p.full_name, r.requested_by FROM lab_requests r JOIN patients p ON r.patient_id=p.patient_id WHERE r.request_id=?");
+            $stmt_pat->bind_param("i", $req_id);
+            $stmt_pat->execute();
+            $p_res = $stmt_pat->get_result()->fetch_assoc();
+            $stmt_pat->close();
+
+            if (!$p_res) throw new Exception("Lab request not found.");
+            $pid = intval($p_res['patient_id']);
+            $pat_name = $p_res['full_name'];
+
+            $stmt_rej = $conn->prepare("INSERT INTO sample_rejections (request_id, patient_id, rejection_reason, sample_type, rejected_by, comments, status) VALUES (?, ?, ?, ?, ?, ?, 'Recollection Pending')");
+            $stmt_rej->bind_param("iissss", $req_id, $pid, $reason, $sample, $tech, $comment);
+            if (!$stmt_rej->execute()) throw new Exception("Failed to log sample rejection.");
+            $stmt_rej->close();
+
+            $stmt_req = $conn->prepare("UPDATE lab_requests SET status='Rejected' WHERE request_id=?");
+            $stmt_req->bind_param("i", $req_id);
+            if (!$stmt_req->execute()) throw new Exception("Failed to update request status.");
+            $stmt_req->close();
+
+            $rej_val = "REJECTED: " . $reason;
+            $stmt_tr = $conn->prepare("UPDATE test_results SET result_value=?, technician_remarks=? WHERE request_id=?");
+            $stmt_tr->bind_param("ssi", $rej_val, $comment, $req_id);
+            $stmt_tr->execute();
+            $stmt_tr->close();
+
+            $notif_msg = $conn->real_escape_string("⚠️ SPECIMEN REJECTED: $pat_name (Req #$req_id) - Reason: $reason. Recollection requested.");
+            $notif_link = $conn->real_escape_string("sample_rejection.php?req_id=$req_id");
+            $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('Doctor', '$notif_msg', '$notif_link', 0, NOW())");
+            $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('Admin', '$notif_msg', '$notif_link', 0, NOW())");
+
+            audit_log($conn, 'reject_specimen', 'lab_requests', $req_id, "Rejected ($reason) for $pat_name");
+            $conn->commit();
+
+            ob_end_clean();
+            header("Location: enter_results.php?rejected=$req_id");
+            exit();
+        } catch (Exception $e) {
+            $conn->rollback();
+            $error = "Rejection Error: " . $e->getMessage();
+        }
+    } else {
+        $error = "Please specify a valid rejection reason.";
+    }
 }
 
 $queue_search = trim($_GET['q'] ?? '');
@@ -536,6 +598,9 @@ if(!empty($patient_flags)):
                 <?php if(!$canEnter): ?>
                 <div class="btn-locked"><i class="fa-solid fa-lock"></i> Awaiting Payment</div>
                 <?php else: ?>
+                <button type="button" class="btn btn-outline-danger btn-sm rounded-pill px-3 fw-bold" data-bs-toggle="modal" data-bs-target="#rejectModalWorkbench">
+                    <i class="fa-solid fa-ban me-1"></i> Reject Specimen
+                </button>
                 <button type="submit" name="save_results" id="submitBtn" class="btn-save <?php echo $isInProg?'prog':''; ?>">
                     <i class="fa-solid fa-check-double"></i> Save &amp; Complete
                 </button>
@@ -543,6 +608,73 @@ if(!empty($patient_flags)):
             </div>
         </div>
     </form>
+</div>
+
+<!-- MODAL: REJECT SPECIMEN (WORKBENCH) -->
+<div class="modal fade" id="rejectModalWorkbench" tabindex="-1" aria-labelledby="rejectModalWorkbenchLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title fw-bold" id="rejectModalWorkbenchLabel">
+                    <i class="fa-solid fa-ban me-2"></i> Reject Specimen — Req #<?php echo $selected_request['request_id']; ?>
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post">
+                <?php csrf_field(); ?>
+                <input type="hidden" name="request_id" value="<?php echo $selected_request['request_id']; ?>">
+                <div class="modal-body p-4">
+                    <div class="alert alert-warning py-2 small mb-3">
+                        <strong>Patient:</strong> <?php echo htmlspecialchars($selected_request['full_name']); ?> (OPD: <?php echo htmlspecialchars($selected_request['opd_number']); ?>)
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Rejection Reason (Root Cause)</label>
+                        <select name="rejection_reason" class="form-select" required>
+                            <option value="">-- Select Root Cause Reason --</option>
+                            <option value="Gross Hemolysis (Pink/Red Serum)">Gross Hemolysis (Pink/Red Serum)</option>
+                            <option value="Clotted Specimen (EDTA / Citrate Tube)">Clotted Specimen (EDTA / Citrate Tube)</option>
+                            <option value="Quantity Not Sufficient (QNS)">Quantity Not Sufficient (QNS)</option>
+                            <option value="Incorrect Container / Wrong Additive">Incorrect Container / Wrong Additive</option>
+                            <option value="Mislabeled / Unlabeled Specimen Tube">Mislabeled / Unlabeled Specimen Tube</option>
+                            <option value="Specimen Leaking / Broken Container">Specimen Leaking / Broken Container</option>
+                            <option value="Lipemic / Severe Turbidity">Lipemic / Severe Turbidity</option>
+                            <option value="Transit Delay / Cold Chain Broken">Transit Delay / Cold Chain Broken</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Specimen Type</label>
+                        <select name="sample_type" class="form-select">
+                            <option value="Whole Blood (EDTA)">Whole Blood (EDTA - Purple)</option>
+                            <option value="Serum (Red / SST Gold Top)">Serum (Red / SST Gold Top)</option>
+                            <option value="Plasma (Sodium Citrate - Blue)">Plasma (Sodium Citrate - Blue)</option>
+                            <option value="Urine (Clean Catch / Random)">Urine (Clean Catch / Random)</option>
+                            <option value="Stool Specimen">Stool Specimen</option>
+                            <option value="Sputum Specimen">Sputum Specimen</option>
+                            <option value="Swab / Body Fluid">Swab / Body Fluid</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Phlebotomy Corrective Instructions</label>
+                        <textarea name="comments" rows="3" class="form-control" placeholder="Guidance for redraw (e.g. mix 8 times gently, avoid vigorous suction)..."></textarea>
+                    </div>
+
+                    <div class="p-2 bg-light rounded text-muted small">
+                        <i class="fa-solid fa-triangle-exclamation text-danger me-1"></i>
+                        The order will be marked <strong>Rejected</strong> and sent to the QA register. Doctor will receive an urgent recollection notification.
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary rounded-pill px-3" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" name="reject_sample" class="btn btn-danger rounded-pill px-4 fw-bold">
+                        <i class="fa-solid fa-ban me-1"></i> Confirm Rejection
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
 
 <?php else: ?>
