@@ -8,6 +8,8 @@ require_once 'includes/audit.php';
 if (!isset($_SESSION['loggedin'])) { header("location: index.php"); exit; }
 
 $message = $message_type = "";
+$new_patient_id = 0;
+$registered_patient = null;
 
 // Check which insurance columns actually exist in patients table
 function ap_col($conn, $col) {
@@ -32,7 +34,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $chk->bind_param("s", $opd); $chk->execute(); $chk->store_result();
 
     if ($chk->num_rows > 0) {
-        $message = "OPD number already exists."; $message_type = "error";
+        $message = "OPD number already exists. Please choose or verify the OPD number.";
+        $message_type = "error";
     } else {
         // Build INSERT only with columns that exist
         if ($has_ins_provider && $has_ins_member) {
@@ -51,13 +54,39 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         } elseif ($s2->execute()) {
             $new_patient_id = $conn->insert_id;
             audit_log($conn, 'register_patient', 'patients', $new_patient_id, $opd.' — '.$name);
-            $message = "Patient registered successfully."; $message_type = "success";
+            $message = "Patient registered successfully!";
+            $message_type = "success";
+
+            // Fetch details for instant on-screen routing confirmation
+            $pst = $conn->prepare("SELECT * FROM patients WHERE patient_id=?");
+            $pst->bind_param("i", $new_patient_id);
+            $pst->execute();
+            $registered_patient = $pst->get_result()->fetch_assoc();
+            $pst->close();
         } else {
             $message = "Error: " . $conn->error; $message_type = "error";
         }
         if (isset($s2) && $s2) $s2->close();
     }
     $chk->close();
+}
+
+// Auto-calculate Next Suggested OPD Number
+$year = date('Y');
+$suggested_opd = "OPD-$year-001";
+$opd_res = $conn->query("SELECT opd_number FROM patients ORDER BY patient_id DESC LIMIT 1");
+if ($opd_res && $lr = $opd_res->fetch_assoc()) {
+    if (preg_match('/(\d+)$/', $lr['opd_number'], $m)) {
+        $next_seq = intval($m[1]) + 1;
+        $suggested_opd = sprintf("OPD-%s-%03d", $year, $next_seq);
+    }
+}
+
+// Fetch Recently Registered Patients (Last 6)
+$recent_patients = [];
+$r_res = $conn->query("SELECT patient_id, opd_number, full_name, age, gender, insurance_provider, registered_at FROM patients ORDER BY patient_id DESC LIMIT 6");
+if ($r_res) {
+    $recent_patients = $r_res->fetch_all(MYSQLI_ASSOC);
 }
 
 // Insurance providers list
@@ -121,23 +150,58 @@ include 'includes/header.php';
 <div class="rw">
 <div class="crumb"><a href="dashboard.php"><i class="fa-solid fa-house-chimney"></i></a><span>›</span><span>Register Patient</span></div>
 <div class="rh">
-    <div><h1>New Patient</h1><p>Create an OPD file record</p></div>
+    <div><h1>New Patient</h1><p>Create an OPD file record and generate consultation routing slip</p></div>
     <span style="font-size:.7rem;font-weight:700;background:#f0fdf4;color:#16a34a;border:1px solid #86efac;border-radius:20px;padding:4px 11px">
         <i class="fa-solid fa-circle-dot" style="font-size:.55rem;margin-right:3px"></i>Reception Open
     </span>
 </div>
 
-<?php if ($message): ?>
-<div class="toast <?php echo $message_type; ?>" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-    <div style="display:flex;align-items:center;gap:10px">
-        <div class="tic"><i class="fa-solid <?php echo $message_type==='success'?'fa-check':'fa-xmark'; ?>"></i></div>
-        <span><?php echo htmlspecialchars($message); ?></span>
+<?php if ($registered_patient): ?>
+<!-- Immediate Confirmation & Print Slip Banner -->
+<div style="background:#f0fdf4;border:2px solid #86efac;border-radius:14px;padding:20px 24px;margin-bottom:28px;box-shadow:0 4px 15px rgba(22,163,74,0.08)">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:44px;height:44px;background:#dcfce7;color:#16a34a;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0">
+                <i class="fa-solid fa-check-double"></i>
+            </div>
+            <div>
+                <h3 style="font-size:1.1rem;font-weight:800;color:#166534;margin:0 0 2px">Patient Registered Successfully!</h3>
+                <p style="font-size:.8rem;color:#15803d;margin:0">OPD Consultation Card is generated and ready to hand to the patient</p>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a href="print_routing_slip.php?patient_id=<?php echo $registered_patient['patient_id']; ?>&autoprint=1" target="_blank" class="btn btn-success fw-bold px-3 py-2 rounded-pill shadow-sm" style="display:inline-flex;align-items:center;gap:7px;font-size:.84rem;text-decoration:none">
+                <i class="fa-solid fa-print"></i> Print OPD Slip (For Doctor)
+            </a>
+            <a href="request_test.php?search=<?php echo urlencode($registered_patient['opd_number']); ?>" class="btn btn-primary fw-bold px-3 py-2 rounded-pill shadow-sm" style="display:inline-flex;align-items:center;gap:7px;font-size:.84rem;text-decoration:none">
+                <i class="fa-solid fa-microscope"></i> Order Tests (CPOE)
+            </a>
+        </div>
     </div>
-    <?php if(!empty($new_patient_id)): ?>
-    <a href="print_routing_slip.php?patient_id=<?php echo $new_patient_id; ?>" target="_blank" class="btn btn-sm btn-success rounded-pill px-3 fw-bold shadow-sm" style="text-decoration:none;font-size:.78rem;display:inline-flex;align-items:center;gap:6px">
-        <i class="fa-solid fa-print"></i> Print OPD Slip for Doctor
-    </a>
-    <?php endif; ?>
+
+    <div style="background:#fff;border:1px solid #bbf7d0;border-radius:10px;padding:12px 18px;display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:12px">
+        <div>
+            <span style="font-size:.65rem;font-weight:700;color:#16a34a;text-transform:uppercase;letter-spacing:.5px;display:block">OPD File No</span>
+            <span style="font-size:1rem;font-weight:800;color:#0f172a"><?php echo htmlspecialchars($registered_patient['opd_number']); ?></span>
+        </div>
+        <div>
+            <span style="font-size:.65rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;display:block">Patient Name</span>
+            <span style="font-size:.95rem;font-weight:700;color:#0f172a"><?php echo htmlspecialchars($registered_patient['full_name']); ?></span>
+        </div>
+        <div>
+            <span style="font-size:.65rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;display:block">Age / Gender</span>
+            <span style="font-size:.88rem;font-weight:600;color:#334155"><?php echo $registered_patient['age']; ?> Y · <?php echo $registered_patient['gender']; ?></span>
+        </div>
+        <div>
+            <span style="font-size:.65rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;display:block">Coverage / Scheme</span>
+            <span style="font-size:.88rem;font-weight:600;color:#334155"><?php echo htmlspecialchars($registered_patient['insurance_provider'] ?: 'Cash Paying'); ?></span>
+        </div>
+    </div>
+</div>
+<?php elseif ($message): ?>
+<div class="toast <?php echo $message_type; ?>">
+    <div class="tic"><i class="fa-solid <?php echo $message_type==='success'?'fa-check':'fa-xmark'; ?>"></i></div>
+    <span><?php echo htmlspecialchars($message); ?></span>
 </div>
 <?php endif; ?>
 
@@ -148,14 +212,14 @@ include 'includes/header.php';
     <div class="sec">
         <div class="sec-lbl">Identity</div>
         <div class="fg2">
-            <div class="f"><label>OPD / File Number</label>
+            <div class="f"><label>OPD / File Number (Auto-Suggested)</label>
                 <div class="fiw"><i class="fa-solid fa-id-card"></i>
-                    <input type="text" name="opd_number" required placeholder="OP-2025-001">
+                    <input type="text" name="opd_number" required value="<?php echo htmlspecialchars($suggested_opd); ?>">
                 </div>
             </div>
             <div class="f"><label>Full Name</label>
                 <div class="fiw"><i class="fa-solid fa-user"></i>
-                    <input type="text" name="full_name" required placeholder="Surname First Name">
+                    <input type="text" name="full_name" required placeholder="Surname First Name" autofocus>
                 </div>
             </div>
         </div>
@@ -166,7 +230,7 @@ include 'includes/header.php';
         <div class="fg2" style="margin-bottom:14px">
             <div class="f"><label>Age (Years)</label>
                 <div class="fiw"><i class="fa-solid fa-cake-candles"></i>
-                    <input type="number" name="age" required min="0" max="120" placeholder="—">
+                    <input type="number" name="age" required min="0" max="120" placeholder="e.g. 35">
                 </div>
             </div>
             <div class="f"><label>Phone Number</label>
@@ -210,9 +274,56 @@ include 'includes/header.php';
 
     <div class="act">
         <a href="dashboard.php" class="bback"><i class="fa-solid fa-arrow-left"></i> Cancel</a>
-        <button type="submit" class="bsave"><i class="fa-solid fa-floppy-disk"></i> Save Record</button>
+        <button type="submit" class="bsave"><i class="fa-solid fa-floppy-disk"></i> Save &amp; Generate Consultation Slip</button>
     </div>
 </div>
 </form>
+
+<!-- Recently Registered Patients Queue -->
+<?php if (!empty($recent_patients)): ?>
+<div style="margin-top:36px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h3 style="font-size:.95rem;font-weight:700;color:#0f172a;margin:0;display:flex;align-items:center;gap:7px">
+            <i class="fa-solid fa-clock-rotate-left" style="color:#3b82f6"></i> Recently Registered Patients
+        </h3>
+        <span style="font-size:.72rem;color:#94a3b8">Latest Check-ins</span>
+    </div>
+
+    <div style="background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse;font-size:.82rem">
+            <thead>
+                <tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:.7rem;text-transform:uppercase;letter-spacing:.8px;text-align:left">
+                    <th style="padding:10px 16px">OPD Number</th>
+                    <th style="padding:10px 16px">Patient Name</th>
+                    <th style="padding:10px 16px">Age / Gender</th>
+                    <th style="padding:10px 16px">Coverage</th>
+                    <th style="padding:10px 16px">Time</th>
+                    <th style="padding:10px 16px;text-align:right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($recent_patients as $rp): ?>
+                <tr style="border-bottom:1px solid #f1f5f9;transition:background .1s" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='transparent'">
+                    <td style="padding:10px 16px;font-weight:700;font-family:monospace;color:#1d4ed8"><?php echo htmlspecialchars($rp['opd_number']); ?></td>
+                    <td style="padding:10px 16px;font-weight:700;color:#0f172a"><?php echo htmlspecialchars($rp['full_name']); ?></td>
+                    <td style="padding:10px 16px;color:#475569"><?php echo $rp['age']; ?> Y · <?php echo $rp['gender']; ?></td>
+                    <td style="padding:10px 16px"><span style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:20px;padding:2px 8px;font-size:.72rem;font-weight:600;color:#475569"><?php echo htmlspecialchars($rp['insurance_provider'] ?: 'Cash'); ?></span></td>
+                    <td style="padding:10px 16px;color:#94a3b8;font-size:.75rem"><?php echo date('d M H:i', strtotime($rp['registered_at'])); ?></td>
+                    <td style="padding:10px 16px;text-align:right;white-space:nowrap">
+                        <a href="print_routing_slip.php?patient_id=<?php echo $rp['patient_id']; ?>" target="_blank" style="background:#dcfce7;color:#15803d;border:1px solid #86efac;border-radius:6px;padding:4px 9px;text-decoration:none;font-size:.72rem;font-weight:700;display:inline-flex;align-items:center;gap:4px;margin-right:4px">
+                            <i class="fa-solid fa-print"></i> Slip
+                        </a>
+                        <a href="request_test.php?search=<?php echo urlencode($rp['opd_number']); ?>" style="background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;border-radius:6px;padding:4px 9px;text-decoration:none;font-size:.72rem;font-weight:700;display:inline-flex;align-items:center;gap:4px">
+                            <i class="fa-solid fa-flask"></i> Order
+                        </a>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+<?php endif; ?>
+
 </div>
 <?php include 'includes/footer.php'; ?>
