@@ -1,6 +1,79 @@
 </div><!-- /.container.main-content -->
 
-<footer class="bg-dark text-white mt-auto pt-5 pb-3 shadow-lg border-top border-primary border-3" style="background: linear-gradient(180deg, #161c24 0%, #0d1117 100%) !important;">
+<style>
+.yala-footer-light {
+    background: #ffffff;
+    border-top: 3px solid #2563eb;
+    color: #475569;
+    font-size: 0.88rem;
+    box-shadow: 0 -6px 24px rgba(15, 23, 42, 0.06);
+}
+.yala-footer-light .footer-title {
+    color: #0f172a;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.yala-footer-light .text-medical {
+    color: #2563eb !important;
+}
+.yala-footer-light .footer-lead {
+    color: #64748b;
+    line-height: 1.55;
+    font-size: 0.84rem;
+}
+.yala-footer-light .footer-panel {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px 14px;
+    transition: all 0.2s ease;
+}
+.yala-footer-light .footer-panel:hover {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+}
+.yala-footer-light .footer-link {
+    color: #475569;
+    text-decoration: none;
+    transition: color 0.2s ease, transform 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.84rem;
+}
+.yala-footer-light .footer-link:hover {
+    color: #2563eb;
+    transform: translateX(3px);
+}
+.yala-footer-light .badge-facility {
+    background: #dbeafe;
+    color: #1e40af;
+    border: 1px solid #bfdbfe;
+    font-weight: 600;
+}
+.yala-footer-light .badge-ecitizen {
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+    font-weight: 700;
+}
+.yala-footer-light .badge-reg {
+    background: #2563eb;
+    color: #ffffff;
+    font-weight: 600;
+}
+.yala-footer-light .badge-std {
+    background: #f1f5f9;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+    font-weight: 500;
+}
+.yala-footer-light hr {
+    border-color: #e2e8f0;
+    opacity: 0.8;
+}
+</style>
+
+<footer class="yala-footer-light mt-auto pt-5 pb-3">
     <div class="container">
         <div class="row g-4">
 
@@ -8,94 +81,94 @@
             <div class="col-lg-3 col-md-6">
                 <div class="d-flex align-items-center mb-3">
                     <?php if(file_exists('logo.png')): ?>
-                        <img src="logo.png" height="36" class="me-2 rounded bg-white p-1" alt="Yala Logo">
+                        <img src="logo.png" height="38" class="me-2 rounded shadow-sm border p-1 bg-white" alt="Yala Logo">
                     <?php else: ?>
-                        <i class="fa-solid fa-hospital fa-2x text-primary me-2"></i>
+                        <i class="fa-solid fa-hospital fa-2x text-medical me-2"></i>
                     <?php endif; ?>
                     <div>
-                        <h6 class="text-white fw-bold mb-0" style="font-size:0.95rem;">YALA SUB-COUNTY HOSPITAL</h6>
-                        <span class="badge bg-primary text-uppercase" style="font-size:0.65rem;">MOH Level 4 Facility</span>
+                        <h6 class="footer-title mb-0" style="font-size:0.95rem;">YALA SUB-COUNTY HOSPITAL</h6>
+                        <span class="badge badge-facility text-uppercase" style="font-size:0.65rem;">MOH Level 4 Facility</span>
                     </div>
                 </div>
-                <p class="small text-muted mb-2 lh-sm">
-                    A Ministry of Health Level 4 public healthcare facility serving the Gem Sub-County and Siaya County communities along the Kisumu–Busia highway corridor.
+                <p class="footer-lead mb-2">
+                    A Ministry of Health Level 4 public healthcare institution serving the Gem Sub-County and Siaya County communities along the Kisumu–Busia highway corridor.
                 </p>
-                <div class="small text-muted mb-3 lh-sm" style="font-size:0.8rem;">
-                    <div class="mb-1"><i class="fa-solid fa-location-dot text-danger me-2"></i>Yala, Gem Sub-County, Siaya County</div>
-                    <div class="mb-1"><i class="fa-solid fa-phone text-success me-2"></i>Casualty / Lab: +254 (0) 57 250522</div>
-                    <div><i class="fa-solid fa-envelope text-info me-2"></i>yala.hospital@health.go.ke</div>
+                <div class="footer-lead mb-3" style="font-size:0.82rem;">
+                    <div class="mb-1"><i class="fa-solid fa-location-dot text-medical me-2"></i>Yala, Gem Sub-County, Siaya County</div>
+                    <div class="mb-1"><i class="fa-solid fa-phone text-medical me-2"></i>Casualty / Lab: +254 (0) 57 250522</div>
+                    <div><i class="fa-solid fa-envelope text-medical me-2"></i>yala.hospital@health.go.ke</div>
                 </div>
                 <div class="d-flex align-items-center gap-2 flex-wrap">
-                    <span class="badge bg-dark border border-secondary text-secondary small py-1 px-2">
-                        <i class="fa-solid fa-shield-virus me-1 text-warning"></i>ISO 15189:2022
+                    <span class="badge badge-std small py-1 px-2">
+                        <i class="fa-solid fa-shield-virus me-1 text-medical"></i>ISO 15189:2022
                     </span>
-                    <span class="badge bg-dark border border-secondary text-secondary small py-1 px-2">
-                        <i class="fa-solid fa-file-waveform me-1 text-info"></i>MOH 204 &bull; 706
+                    <span class="badge badge-std small py-1 px-2">
+                        <i class="fa-solid fa-file-waveform me-1 text-medical"></i>MOH 204 &bull; 706
                     </span>
                 </div>
             </div>
 
             <!-- Col 2: Academic Project & Developer Credentials -->
-            <div class="col-lg-3 col-md-6 border-start-lg border-secondary">
+            <div class="col-lg-3 col-md-6">
                 <div class="d-flex align-items-center mb-3">
-                    <i class="fa-solid fa-graduation-cap text-warning fa-xl me-2"></i>
-                    <h6 class="text-uppercase fw-bold text-light mb-0" style="font-size:0.95rem;">Academic Project</h6>
+                    <i class="fa-solid fa-graduation-cap text-medical fa-xl me-2"></i>
+                    <h6 class="text-uppercase footer-title mb-0" style="font-size:0.95rem;">Academic Project</h6>
                 </div>
-                <p class="small text-muted mb-1">
-                    <strong class="text-light">Project Title:</strong><br>
+                <p class="footer-lead mb-1">
+                    <strong class="text-dark">Project Title:</strong><br>
                     <em>Development of a Web-Based LIMS: A Case of Yala Sub-County Hospital</em>
                 </p>
-                <hr class="border-secondary my-2">
-                <p class="small text-muted mb-1">
-                    <i class="fa-solid fa-user-gear text-primary me-2"></i>
-                    <strong class="text-light">Developer:</strong> Owuor Collins
-                </p>
-                <p class="small text-muted mb-1">
-                    <i class="fa-solid fa-id-badge text-warning me-2"></i>
-                    <strong class="text-light">Reg. No:</strong> <span class="badge bg-primary text-white">SCCI/01227/2022</span>
-                </p>
-                <p class="small text-muted mb-1">
-                    <i class="fa-solid fa-user-tie text-info me-2"></i>
-                    <strong class="text-light">Supervisors:</strong> Dr. Edwin Ngwawe &amp; Mr. Peter Maina Kariuki
-                </p>
-                <p class="small text-muted mb-0">
-                    <i class="fa-solid fa-university text-secondary me-2"></i>
+                <hr class="my-2">
+                <div class="footer-lead mb-1">
+                    <i class="fa-solid fa-user-gear text-medical me-2"></i>
+                    <strong class="text-dark">Developer:</strong> <span class="text-dark fw-semibold">Owuor Collins</span>
+                </div>
+                <div class="footer-lead mb-1">
+                    <i class="fa-solid fa-id-badge text-medical me-2"></i>
+                    <strong class="text-dark">Reg. No:</strong> <span class="badge badge-reg">SCCI/01227/2022</span>
+                </div>
+                <div class="footer-lead mb-1">
+                    <i class="fa-solid fa-user-tie text-medical me-2"></i>
+                    <strong class="text-dark">Supervisors:</strong> Dr. Edwin Ngwawe &amp; Mr. Peter Maina Kariuki
+                </div>
+                <div class="footer-lead mb-0">
+                    <i class="fa-solid fa-university text-medical me-2"></i>
                     Technical University of Kenya (TUK) &bull; SCIT
-                </p>
+                </div>
             </div>
 
             <!-- Col 3: Government Cashless & Standards -->
             <div class="col-lg-3 col-md-6">
                 <div class="d-flex align-items-center mb-3">
-                    <i class="fa-solid fa-landmark-flag text-success fa-xl me-2"></i>
-                    <h6 class="text-uppercase fw-bold text-light mb-0" style="font-size:0.95rem;">eCitizen &amp; Standards</h6>
+                    <i class="fa-solid fa-landmark-flag text-medical fa-xl me-2"></i>
+                    <h6 class="text-uppercase footer-title mb-0" style="font-size:0.95rem;">eCitizen &amp; Standards</h6>
                 </div>
-                <div class="p-2 rounded mb-2 border border-secondary" style="background: rgba(255,255,255,0.03);">
+                <div class="footer-panel mb-2">
                     <div class="d-flex align-items-center justify-content-between mb-1">
-                        <span class="small fw-bold text-success">
-                            <i class="fa-solid fa-mobile-screen-button me-1"></i>eCitizen Cashless
+                        <span class="small fw-bold text-dark">
+                            <i class="fa-solid fa-mobile-screen-button me-1 text-medical"></i>eCitizen Cashless
                         </span>
-                        <span class="badge bg-success" style="font-size:0.65rem;">Paybill 222222</span>
+                        <span class="badge badge-ecitizen" style="font-size:0.65rem;">Paybill 222222</span>
                     </div>
-                    <p class="small text-muted mb-0" style="font-size:0.75rem;">
+                    <p class="footer-lead mb-0" style="font-size:0.75rem;">
                         Compliant with Kenya Gazette Notice No. 16008 &amp; PFM Act 2012. Direct remittance to Siaya County Revenue Fund.
                     </p>
                 </div>
 
                 <div class="mt-2">
-                    <h6 class="text-uppercase text-secondary fw-semibold mb-2" style="font-size:0.75rem;">Source Repository</h6>
-                    <a href="https://github.com/noliptical-web/Yala-LIMS" target="_blank" class="btn btn-outline-light btn-sm w-100 text-start d-flex align-items-center justify-content-between py-1 px-2" style="font-size:0.8rem;">
-                        <span><i class="fa-brands fa-github fa-lg me-2 text-white"></i>noliptical-web/Yala-LIMS</span>
-                        <i class="fa-solid fa-arrow-up-right-from-square small text-muted"></i>
+                    <h6 class="text-uppercase footer-title mb-2" style="font-size:0.75rem; color:#64748b;">Source Repository</h6>
+                    <a href="https://github.com/noliptical-web/Yala-LIMS" target="_blank" class="footer-panel w-100 text-start d-flex align-items-center justify-content-between text-decoration-none py-2 px-3">
+                        <span class="text-dark small fw-semibold"><i class="fa-brands fa-github fa-lg me-2 text-dark"></i>noliptical-web/Yala-LIMS</span>
+                        <i class="fa-solid fa-arrow-up-right-from-square small text-medical"></i>
                     </a>
                 </div>
 
                 <div class="mt-2 d-flex gap-2">
-                    <button type="button" class="btn btn-sm btn-outline-secondary w-100 py-1" style="font-size:0.75rem;" data-bs-toggle="modal" data-bs-target="#aboutLimsModal">
-                        <i class="fa-solid fa-circle-info me-1 text-primary"></i>About System
+                    <button type="button" class="btn btn-sm btn-outline-primary w-100 py-1" style="font-size:0.75rem;" data-bs-toggle="modal" data-bs-target="#aboutLimsModal">
+                        <i class="fa-solid fa-circle-info me-1"></i>About System
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-secondary w-100 py-1" style="font-size:0.75rem;" data-bs-toggle="modal" data-bs-target="#shortcutsModal">
-                        <i class="fa-solid fa-keyboard me-1 text-warning"></i>Shortcuts
+                        <i class="fa-solid fa-keyboard me-1"></i>Shortcuts
                     </button>
                 </div>
             </div>
@@ -103,51 +176,51 @@
             <!-- Col 4: Quick Navigation & Live Session Status -->
             <div class="col-lg-3 col-md-6">
                 <div class="d-flex align-items-center mb-3">
-                    <i class="fa-solid fa-compass text-info fa-xl me-2"></i>
-                    <h6 class="text-uppercase fw-bold text-light mb-0" style="font-size:0.95rem;">System &amp; Session</h6>
+                    <i class="fa-solid fa-compass text-medical fa-xl me-2"></i>
+                    <h6 class="text-uppercase footer-title mb-0" style="font-size:0.95rem;">System &amp; Session</h6>
                 </div>
 
-                <div class="p-2 rounded mb-2 border border-secondary" style="background: rgba(255,255,255,0.03);">
+                <div class="footer-panel mb-2">
                     <?php if(isset($_SESSION['username'])): ?>
-                        <div class="small text-muted mb-1">
-                            <i class="fa-solid fa-user-circle text-primary me-1"></i>Session:
-                            <strong class="text-white"><?php echo htmlspecialchars($_SESSION['username']); ?></strong>
-                            <span class="badge bg-info text-dark ms-1"><?php echo htmlspecialchars($_SESSION['role'] ?? 'Staff'); ?></span>
+                        <div class="small text-dark mb-1">
+                            <i class="fa-solid fa-user-circle text-medical me-1"></i>Session:
+                            <strong><?php echo htmlspecialchars($_SESSION['username']); ?></strong>
+                            <span class="badge badge-facility ms-1"><?php echo htmlspecialchars($_SESSION['role'] ?? 'Staff'); ?></span>
                         </div>
-                        <div class="small text-muted" style="font-size:0.75rem;">
-                            <i class="fa-solid fa-database text-success me-1"></i>Database: <span class="text-success fw-semibold">yala_lims_db</span> (Online)
+                        <div class="footer-lead" style="font-size:0.75rem;">
+                            <i class="fa-solid fa-circle text-success me-1" style="font-size:0.6rem;"></i>Database: <strong class="text-dark">yala_lims_db</strong> (Connected)
                         </div>
                     <?php else: ?>
-                        <div class="small text-muted">
-                            <i class="fa-solid fa-lock text-warning me-1"></i>Unauthenticated Session
+                        <div class="footer-lead">
+                            <i class="fa-solid fa-lock text-secondary me-1"></i>Unauthenticated Session
                         </div>
                     <?php endif; ?>
                 </div>
 
                 <ul class="list-unstyled small mb-0">
                     <li class="mb-1">
-                        <a href="dashboard.php" class="text-decoration-none text-muted hover-light">
-                            <i class="fa-solid fa-gauge me-2 text-primary"></i>Executive Dashboard
+                        <a href="dashboard.php" class="footer-link">
+                            <i class="fa-solid fa-gauge me-2 text-medical"></i>Executive Dashboard
                         </a>
                     </li>
                     <li class="mb-1">
-                        <a href="notifications.php" class="text-decoration-none text-muted hover-light">
-                            <i class="fa-solid fa-bell me-2 text-danger"></i>Clinical Notifications
+                        <a href="notifications.php" class="footer-link">
+                            <i class="fa-solid fa-bell me-2 text-medical"></i>Clinical Notifications
                         </a>
                     </li>
                     <li class="mb-1">
-                        <a href="blood_bank.php" class="text-decoration-none text-muted hover-light">
-                            <i class="fa-solid fa-droplet me-2 text-danger"></i>Blood Bank &amp; Transfusion
+                        <a href="blood_bank.php" class="footer-link">
+                            <i class="fa-solid fa-droplet me-2 text-medical"></i>Blood Bank &amp; Transfusion
                         </a>
                     </li>
                     <li class="mb-1">
-                        <a href="sample_rejection.php" class="text-decoration-none text-muted hover-light">
-                            <i class="fa-solid fa-vial-circle-check me-2 text-warning"></i>Specimen QA &amp; Rejections
+                        <a href="sample_rejection.php" class="footer-link">
+                            <i class="fa-solid fa-vial-circle-check me-2 text-medical"></i>Specimen QA &amp; Rejections
                         </a>
                     </li>
                     <li class="mb-1">
-                        <a href="qc_log.php" class="text-decoration-none text-muted hover-light">
-                            <i class="fa-solid fa-temperature-half me-2 text-info"></i>ISO 15189 QC &amp; Temp Logs
+                        <a href="qc_log.php" class="footer-link">
+                            <i class="fa-solid fa-temperature-half me-2 text-medical"></i>ISO 15189 QC &amp; Temp Logs
                         </a>
                     </li>
                     <?php if(isset($_SESSION['loggedin'])): ?>
@@ -162,18 +235,18 @@
 
         </div>
 
-        <hr class="border-secondary my-4">
+        <hr class="my-4">
 
         <!-- Bottom Copyright Row -->
         <div class="row align-items-center g-2">
             <div class="col-md-6 text-center text-md-start small text-muted">
-                &copy; <?php echo date('Y'); ?> <strong>Yala Sub-County Hospital LIMS</strong> &bull; County Government of Siaya.<br class="d-sm-none">
-                Final Year B.Tech IT Project by <strong>Owuor Collins</strong> (<span class="text-light">SCCI/01227/2022</span>), TUK.
+                &copy; <?php echo date('Y'); ?> <strong class="text-dark">Yala Sub-County Hospital LIMS</strong> &bull; County Government of Siaya.<br class="d-sm-none">
+                Final Year B.Tech IT Project by <strong class="text-dark">Owuor Collins</strong> (<span class="text-medical">SCCI/01227/2022</span>), TUK.
             </div>
             <div class="col-md-6 text-center text-md-end small text-muted">
                 <span class="me-3"><i class="fa-solid fa-shield-halved text-success me-1"></i>256-Bit SSL Intranet</span>
-                <span class="me-3"><i class="fa-solid fa-code-branch text-info me-1"></i>v2.4 (Level 4 Release)</span>
-                <a href="https://github.com/noliptical-web/Yala-LIMS" target="_blank" class="text-muted text-decoration-none hover-light">
+                <span class="me-3"><i class="fa-solid fa-code-branch text-primary me-1"></i>v2.4 (Level 4 Release)</span>
+                <a href="https://github.com/noliptical-web/Yala-LIMS" target="_blank" class="text-dark text-decoration-none fw-semibold">
                     <i class="fa-brands fa-github me-1"></i>GitHub
                 </a>
             </div>
