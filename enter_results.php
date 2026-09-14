@@ -15,7 +15,11 @@ $saved_id = 0;
 
 if (isset($_GET['saved']) && intval($_GET['saved']) > 0) {
     $saved_id = intval($_GET['saved']);
-    $success  = "Results saved for Request #$saved_id — doctor notified.";
+    if (isset($_GET['panic']) && $_GET['panic'] == '1') {
+        $error = "⚠️ CRITICAL PANIC ALERT: Life-threatening results detected! High-priority clinical notification dispatched to doctor.";
+    } else {
+        $success = "Results saved for Request #$saved_id — doctor notified.";
+    }
 }
 
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['save_results'])) {
@@ -27,10 +31,48 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['save_results'])) {
         try {
             $stmt = $conn->prepare("UPDATE test_results SET result_value=?, technician_remarks=?, entered_by=? WHERE result_id=?");
             $uid  = intval($_SESSION['id'] ?? 1);
+            $has_panic = false;
+            $panic_details = [];
+
             foreach ($_POST['results'] as $result_id => $value) {
                 $val=trim($value); $comment=trim($_POST['comments'][$result_id]??""); $rid=intval($result_id);
                 $stmt->bind_param("ssii",$val,$comment,$uid,$rid);
                 if(!$stmt->execute()) throw new Exception("Failed to update result ID: $rid");
+
+                // Critical Panic Value Evaluation
+                $t_info = $conn->query("SELECT t.test_name FROM test_results tr JOIN lab_tests t ON tr.test_id=t.test_id WHERE tr.result_id=$rid");
+                if ($t_info && $t_row = $t_info->fetch_assoc()) {
+                    $tname = strtolower($t_row['test_name']);
+                    $val_clean = strtolower($val);
+                    $num = floatval($val);
+
+                    // 1. Severe Hemoglobin / Anemia (< 6.0 g/dL or > 20.0 g/dL)
+                    if (str_contains($tname, 'hemoglobin') || str_contains($tname, 'hb')) {
+                        if ($num > 0 && ($num < 6.0 || $num > 20.0)) {
+                            $has_panic = true; $panic_details[] = "Hb: $val";
+                        }
+                    }
+                    // 2. Severe Blood Glucose (< 2.5 or > 25.0 mmol/L)
+                    if (str_contains($tname, 'glucose') || str_contains($tname, 'rbs') || str_contains($tname, 'fbs')) {
+                        if ($num > 0 && ($num < 2.5 || $num > 25.0)) {
+                            $has_panic = true; $panic_details[] = "Glucose: $val";
+                        }
+                    }
+                    // 3. Potassium Panic (< 2.8 or > 6.2 mmol/L)
+                    if (str_contains($tname, 'potassium')) {
+                        if ($num > 0 && ($num < 2.8 || $num > 6.2)) {
+                            $has_panic = true; $panic_details[] = "Potassium: $val";
+                        }
+                    }
+                    // 4. Malaria Positive / High density
+                    if (str_contains($tname, 'malaria') && (str_contains($val_clean, 'pos') || str_contains($val_clean, '+++') || str_contains($val_clean, 'high'))) {
+                        $has_panic = true; $panic_details[] = "Malaria: $val";
+                    }
+                    // 5. Keyword panic
+                    if (str_contains($val_clean, 'panic') || str_contains($val_clean, 'critical') || str_contains($val_clean, 'severe')) {
+                        $has_panic = true; $panic_details[] = "{$t_row['test_name']}: $val";
+                    }
+                }
             }
             $stmt->close();
 
@@ -39,30 +81,40 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['save_results'])) {
             if(!$stmt_up->execute()) throw new Exception("Failed to update request status.");
             $stmt_up->close();
 
-            $stmt_pat=$conn->prepare("SELECT p.full_name,r.requested_by FROM lab_requests r JOIN patients p ON r.patient_id=p.patient_id WHERE r.request_id=?");
+            $stmt_pat=$conn->prepare("SELECT p.full_name,r.requested_by,r.patient_id FROM lab_requests r JOIN patients p ON r.patient_id=p.patient_id WHERE r.request_id=?");
             $stmt_pat->bind_param("i",$req_id); $stmt_pat->execute();
             $pat_row=$stmt_pat->get_result()->fetch_assoc();
             $pat_name=$pat_row['full_name']??"Unknown Patient";
+            $pid=$pat_row['patient_id']??0;
             $stmt_pat->close();
 
-            $notif_msg=$conn->real_escape_string("Results ready: $pat_name #$req_id");
-            $notif_link=$conn->real_escape_string("print_report.php?id=$req_id");
-            $req_by=$conn->real_escape_string($pat_row['requested_by']??'');
-            $dr=$conn->query("SELECT user_id FROM users WHERE full_name='$req_by' AND role='Doctor' LIMIT 1");
-            if($dr&&$dr->num_rows>0){
-                $dr_id=$dr->fetch_assoc()['user_id'];
-                $conn->query("INSERT INTO notifications (target_role,target_user_id,message,link,is_read,created_at) VALUES ('Doctor',$dr_id,'$notif_msg','$notif_link',0,NOW())");
-            } else {
+            if ($has_panic) {
+                $panic_str = implode(', ', $panic_details);
+                $notif_msg = $conn->real_escape_string("CRITICAL PANIC: $pat_name #$req_id ($panic_str) — IMMEDIATE CLINICAL ACTION NEEDED!");
+                $notif_link = $conn->real_escape_string("patient_history.php?patient_id=$pid");
                 $conn->query("INSERT INTO notifications (target_role,message,link,is_read,created_at) VALUES ('Doctor','$notif_msg','$notif_link',0,NOW())");
+                $conn->query("INSERT INTO notifications (target_role,message,link,is_read,created_at) VALUES ('Admin','$notif_msg','$notif_link',0,NOW())");
+            } else {
+                $notif_msg=$conn->real_escape_string("Results ready: $pat_name #$req_id");
+                $notif_link=$conn->real_escape_string("print_report.php?id=$req_id");
+                $req_by=$conn->real_escape_string($pat_row['requested_by']??'');
+                $dr=$conn->query("SELECT user_id FROM users WHERE full_name='$req_by' AND role='Doctor' LIMIT 1");
+                if($dr&&$dr->num_rows>0){
+                    $dr_id=$dr->fetch_assoc()['user_id'];
+                    $conn->query("INSERT INTO notifications (target_role,target_user_id,message,link,is_read,created_at) VALUES ('Doctor',$dr_id,'$notif_msg','$notif_link',0,NOW())");
+                } else {
+                    $conn->query("INSERT INTO notifications (target_role,message,link,is_read,created_at) VALUES ('Doctor','$notif_msg','$notif_link',0,NOW())");
+                }
             }
 
-            audit_log($conn,'save_results','lab_requests',$req_id,$pat_name);
+            audit_log($conn,'save_results','lab_requests',$req_id,$has_panic ? "PANIC: $pat_name" : $pat_name);
             $conn->commit();
 
             sms_results_ready($conn,$req_id);
 
             ob_end_clean();
-            header("Location: enter_results.php?saved=$req_id");
+            $panic_param = $has_panic ? '&panic=1' : '';
+            header("Location: enter_results.php?saved=$req_id$panic_param");
             exit();
 
         } catch (Exception $e) {

@@ -223,6 +223,24 @@ include 'includes/header.php';
     </div>
     <?php endif; ?>
 
+    <!-- Lab Reagent Inventory: Admin, LabTech -->
+    <?php if ($isAdmin || $isLabTech): ?>
+    <div class="col-6 col-md-4 col-lg-3">
+        <a href="inventory.php" class="mod-card">
+            <div class="mod-icon">📦</div>
+            <div class="mod-title">Lab Inventory</div>
+            <div class="mod-desc">Reagents, test kits, batch tracking &amp; expiry alerts</div>
+        </a>
+    </div>
+    <div class="col-6 col-md-4 col-lg-3">
+        <a href="qc_log.php" class="mod-card">
+            <div class="mod-icon">🌡️</div>
+            <div class="mod-title">Quality Control (QC)</div>
+            <div class="mod-desc">Daily fridge temps, analyzer calibrations (ISO 15189)</div>
+        </a>
+    </div>
+    <?php endif; ?>
+
     <!-- Reports: Admin, Doctor ONLY -->
     <?php if ($isAdmin || $isDoctor): ?>
     <div class="col-6 col-md-4 col-lg-3">
