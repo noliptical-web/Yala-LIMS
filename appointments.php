@@ -20,6 +20,11 @@ $isDoctor    = ($role === 'Doctor');
 $isReception = ($role === 'Receptionist');
 $isLabTech   = ($role === 'LabTech' || $role === 'Lab Technician' || $role === 'LabTechnician');
 
+if ($isLabTech && !$isAdmin) {
+    header("location: dashboard.php");
+    exit;
+}
+
 // ── SEARCH PATIENT FOR SCHEDULING ──────────────────────────────────────────
 if (isset($_GET['search_opd']) && trim($_GET['search_opd']) !== '') {
     $search = trim($_GET['search_opd']);

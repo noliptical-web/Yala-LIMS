@@ -173,9 +173,18 @@ include 'includes/header.php';
             <a href="print_routing_slip.php?patient_id=<?php echo $registered_patient['patient_id']; ?>&autoprint=1" target="_blank" class="btn btn-success fw-bold px-3 py-2 rounded-pill shadow-sm" style="display:inline-flex;align-items:center;gap:7px;font-size:.84rem;text-decoration:none">
                 <i class="fa-solid fa-print"></i> Print OPD Slip (For Doctor)
             </a>
+            <?php if (isset($_SESSION['role']) && ($_SESSION['role'] === 'Doctor' || $_SESSION['role'] === 'Admin')): ?>
             <a href="request_test.php?search=<?php echo urlencode($registered_patient['opd_number']); ?>" class="btn btn-primary fw-bold px-3 py-2 rounded-pill shadow-sm" style="display:inline-flex;align-items:center;gap:7px;font-size:.84rem;text-decoration:none">
                 <i class="fa-solid fa-microscope"></i> Order Tests (CPOE)
             </a>
+            <?php else: ?>
+            <a href="appointments.php?search_opd=<?php echo urlencode($registered_patient['opd_number']); ?>" class="btn btn-outline-primary fw-bold px-3 py-2 rounded-pill shadow-sm" style="display:inline-flex;align-items:center;gap:7px;font-size:.84rem;text-decoration:none">
+                <i class="fa-solid fa-calendar-plus"></i> Book Appointment
+            </a>
+            <a href="add_patient.php" class="btn btn-outline-secondary fw-bold px-3 py-2 rounded-pill shadow-sm" style="display:inline-flex;align-items:center;gap:7px;font-size:.84rem;text-decoration:none">
+                <i class="fa-solid fa-user-plus"></i> Register Next
+            </a>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -313,9 +322,15 @@ include 'includes/header.php';
                         <a href="print_routing_slip.php?patient_id=<?php echo $rp['patient_id']; ?>" target="_blank" style="background:#dcfce7;color:#15803d;border:1px solid #86efac;border-radius:6px;padding:4px 9px;text-decoration:none;font-size:.72rem;font-weight:700;display:inline-flex;align-items:center;gap:4px;margin-right:4px">
                             <i class="fa-solid fa-print"></i> Slip
                         </a>
+                        <?php if (isset($_SESSION['role']) && ($_SESSION['role'] === 'Doctor' || $_SESSION['role'] === 'Admin')): ?>
                         <a href="request_test.php?search=<?php echo urlencode($rp['opd_number']); ?>" style="background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;border-radius:6px;padding:4px 9px;text-decoration:none;font-size:.72rem;font-weight:700;display:inline-flex;align-items:center;gap:4px">
                             <i class="fa-solid fa-flask"></i> Order
                         </a>
+                        <?php else: ?>
+                        <a href="appointments.php?search_opd=<?php echo urlencode($rp['opd_number']); ?>" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:6px;padding:4px 9px;text-decoration:none;font-size:.72rem;font-weight:700;display:inline-flex;align-items:center;gap:4px">
+                            <i class="fa-solid fa-calendar-plus"></i> Appt
+                        </a>
+                        <?php endif; ?>
                     </td>
                 </tr>
                 <?php endforeach; ?>

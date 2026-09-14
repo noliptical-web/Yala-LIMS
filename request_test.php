@@ -1,7 +1,10 @@
 <?php
 session_start();
 require_once 'includes/db_connect.php';
-if (!isset($_SESSION['loggedin'])) { header("location: dashboard.php"); exit; }
+if (!isset($_SESSION['loggedin']) || ($_SESSION['role'] !== 'Doctor' && $_SESSION['role'] !== 'Admin')) {
+    header("location: dashboard.php");
+    exit;
+}
 $success=$error=""; $patient=null; $doctor_name=$_SESSION['full_name']??'Doctor';
 
 if ($_SERVER["REQUEST_METHOD"]=="POST"&&isset($_POST['submit_order'])) {
