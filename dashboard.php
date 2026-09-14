@@ -201,6 +201,28 @@ include 'includes/header.php';
     </div>
     <?php endif; ?>
 
+    <!-- Appointments: Admin, Doctor, Receptionist -->
+    <?php if ($isAdmin || $isDoctor || $isReception): ?>
+    <div class="col-6 col-md-4 col-lg-3">
+        <a href="appointments.php" class="mod-card">
+            <div class="mod-icon">📅</div>
+            <div class="mod-title">Appointments</div>
+            <div class="mod-desc">Schedule patient visits and test bookings</div>
+        </a>
+    </div>
+    <?php endif; ?>
+
+    <!-- Insurance Claims: Admin, Receptionist -->
+    <?php if ($isAdmin || $isReception): ?>
+    <div class="col-6 col-md-4 col-lg-3">
+        <a href="insurance_claims.php" class="mod-card">
+            <div class="mod-icon">🛡️</div>
+            <div class="mod-title">Insurance Claims</div>
+            <div class="mod-desc">Manage SHA / NHIF and private claims</div>
+        </a>
+    </div>
+    <?php endif; ?>
+
     <!-- Reports: Admin, Doctor ONLY -->
     <?php if ($isAdmin || $isDoctor): ?>
     <div class="col-6 col-md-4 col-lg-3">

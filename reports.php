@@ -102,7 +102,12 @@ table.rt td{padding:10px 16px;font-size:.83rem;vertical-align:middle}
 <div class="pw">
 <div class="ph">
     <div><h1>Reports</h1><p><?php echo date('d M Y',strtotime($date_from)); ?> — <?php echo date('d M Y',strtotime($date_to)); ?></p></div>
-    <button onclick="window.print()" class="btn-print no-print"><i class="fa-solid fa-print me-1"></i> Print</button>
+    <div style="display:flex;gap:8px;align-items:center">
+        <a href="export_moh.php?date_from=<?php echo urlencode($date_from); ?>&date_to=<?php echo urlencode($date_to); ?>" class="btn-print no-print" style="background:#16a34a;text-decoration:none">
+            <i class="fa-solid fa-file-excel me-1"></i> Export MOH 240 (CSV)
+        </a>
+        <button onclick="window.print()" class="btn-print no-print"><i class="fa-solid fa-print me-1"></i> Print</button>
+    </div>
 </div>
 
 <form method="get" class="filter-bar no-print">

@@ -219,7 +219,9 @@ table.rt td{padding:10px 16px;vertical-align:middle}
 .tunits{font-size:.72rem;color:#94a3b8}
 .rinp{width:100%;border:1.5px solid #e2e8f0;border-radius:7px;padding:8px 10px;font-size:.85rem;font-family:'DM Sans',sans-serif;outline:none;transition:border-color .15s,box-shadow .15s;background:#fafafa}
 .rinp:focus{border-color:#3b82f6;background:#fff;box-shadow:0 0 0 3px rgba(59,130,246,.1)}
-.rinp.abnormal{border-color:#f59e0b;color:#92400e;font-weight:600;background:#fffbeb}
+.rinp.abnormal{border-color:#ef4444;color:#991b1b;font-weight:600;background:#fef2f2}
+.rinp.is-low{border-color:#f59e0b;color:#92400e;font-weight:600;background:#fffbeb}
+.rinp.is-normal{border-color:#22c55e;color:#166534;background:#f0fdf4}
 .rinp:disabled{background:#f8fafc;color:#cbd5e1;cursor:not-allowed}
 .rrange{font-size:.72rem;color:#94a3b8;display:inline-block;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:3px 8px}
 .remark-inp{width:100%;border:1.5px solid #e2e8f0;border-radius:7px;padding:7px 10px;font-size:.78rem;font-family:'DM Sans',sans-serif;outline:none;transition:border-color .15s;background:#fafafa}
@@ -364,6 +366,9 @@ table.rt td{padding:10px 16px;vertical-align:middle}
                 <?php else: ?><span class="pbt unpaid">UNPAID</span><?php endif; ?>
             </div>
         </div>
+        <a href="print_barcode.php?id=<?php echo $selected_request['request_id']; ?>" target="_blank" class="btn btn-sm btn-light rounded-pill px-3 fw-bold text-primary shadow-sm" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-size:.78rem;white-space:nowrap;margin-left:auto">
+            <i class="fa-solid fa-barcode"></i> Print Tube Label
+        </a>
     </div>
 
     <!-- Sample tracker -->
@@ -448,11 +453,15 @@ if(!empty($patient_flags)):
                     <?php if($test['units']): ?><span class="tunits"><?php echo htmlspecialchars($test['units']); ?></span><?php endif; ?>
                 </td>
                 <td>
-                    <input type="text" name="results[<?php echo $test['result_id']; ?>]"
-                           class="rinp result-input"
-                           value="<?php echo htmlspecialchars($ev); ?>"
-                           placeholder="Enter result…"
-                           <?php echo $canEnter?'required':'disabled'; ?>>
+                    <div style="position:relative;display:flex;align-items:center">
+                        <input type="text" name="results[<?php echo $test['result_id']; ?>]"
+                               class="rinp result-input"
+                               data-range="<?php echo htmlspecialchars($test['normal_range']?:''); ?>"
+                               value="<?php echo htmlspecialchars($ev); ?>"
+                               placeholder="Enter result…"
+                               <?php echo $canEnter?'required':'disabled'; ?>>
+                        <span class="range-flag" style="display:none;position:absolute;right:8px;font-size:.65rem;font-weight:700;padding:2px 6px;border-radius:10px;pointer-events:none"></span>
+                    </div>
                 </td>
                 <td><span class="rrange"><?php echo htmlspecialchars($test['normal_range']?:'—'); ?></span></td>
                 <td>
@@ -495,23 +504,119 @@ if(!empty($patient_flags)):
 </div>
 
 <script>
-const ABN=['pos','high','elev','abnorm','react','+'];
-function checkAbn(inp){
-    const row=inp.closest('.result-row');
-    const val=inp.value.trim().toLowerCase();
-    const ab=val!==''&&ABN.some(k=>val.includes(k));
-    row.classList.toggle('is-abnormal',ab);
-    inp.classList.toggle('abnormal',ab);
-    const n=document.querySelectorAll('.result-row.is-abnormal').length;
-    const badge=document.getElementById('abnBadge');
-    if(badge){document.getElementById('abnCount').textContent=n;badge.style.display=n>0?'':'none';}
+function evaluateResult(inp) {
+    const row = inp.closest('.result-row');
+    const valStr = inp.value.trim();
+    const flag = row ? row.querySelector('.range-flag') : null;
+    const rangeStr = (inp.getAttribute('data-range') || '').trim();
+    
+    if (row) row.classList.remove('is-abnormal');
+    inp.classList.remove('abnormal', 'is-low', 'is-normal');
+    if (flag) { flag.style.display = 'none'; flag.textContent = ''; }
+
+    if (!valStr) {
+        updateAbnCounter();
+        return;
+    }
+
+    const valLower = valStr.toLowerCase();
+    let status = ''; // 'NORMAL', 'HIGH', 'LOW', 'ABNORMAL'
+
+    // 1. Qualitative check
+    const negWords = ['neg', 'normal', 'nil', 'clear', 'non-reactive', 'not seen', 'absent'];
+    const posWords = ['pos', 'high', 'elev', 'abnorm', 'react', '+', 'seen', 'cyst', 'ova'];
+
+    if (posWords.some(w => valLower.includes(w))) {
+        status = 'ABNORMAL';
+    } else if (negWords.some(w => valLower.includes(w))) {
+        status = 'NORMAL';
+    } else {
+        // 2. Numeric range evaluation
+        const numMatch = valStr.match(/^[-+]?[0-9]*\.?[0-9]+/);
+        if (numMatch && rangeStr && rangeStr !== '—') {
+            const num = parseFloat(numMatch[0]);
+            
+            // Format: "min - max" e.g. "11.0 - 15.0"
+            const rangeMatch = rangeStr.match(/([0-9]*\.?[0-9]+)\s*-\s*([0-9]*\.?[0-9]+)/);
+            if (rangeMatch) {
+                const min = parseFloat(rangeMatch[1]);
+                const max = parseFloat(rangeMatch[2]);
+                if (num < min) status = 'LOW';
+                else if (num > max) status = 'HIGH';
+                else status = 'NORMAL';
+            } else if (rangeStr.includes('<')) {
+                const ltMatch = rangeStr.match(/<\s*([0-9]*\.?[0-9]+)/);
+                if (ltMatch) {
+                    const threshold = parseFloat(ltMatch[1]);
+                    status = num < threshold ? 'NORMAL' : 'HIGH';
+                }
+            } else if (rangeStr.includes('>')) {
+                const gtMatch = rangeStr.match(/>\s*([0-9]*\.?[0-9]+)/);
+                if (gtMatch) {
+                    const threshold = parseFloat(gtMatch[1]);
+                    status = num > threshold ? 'NORMAL' : 'LOW';
+                }
+            }
+        }
+    }
+
+    // Apply visual flags
+    if (status === 'HIGH' || status === 'ABNORMAL') {
+        if (row) row.classList.add('is-abnormal');
+        inp.classList.add('abnormal');
+        if (flag) {
+            flag.textContent = status === 'HIGH' ? 'HIGH' : 'ABN';
+            flag.style.background = '#fee2e2';
+            flag.style.color = '#dc2626';
+            flag.style.border = '1px solid #fca5a5';
+            flag.style.display = 'inline-block';
+        }
+    } else if (status === 'LOW') {
+        if (row) row.classList.add('is-abnormal');
+        inp.classList.add('is-low');
+        if (flag) {
+            flag.textContent = 'LOW';
+            flag.style.background = '#fef3c7';
+            flag.style.color = '#d97706';
+            flag.style.border = '1px solid #fcd34d';
+            flag.style.display = 'inline-block';
+        }
+    } else if (status === 'NORMAL') {
+        inp.classList.add('is-normal');
+        if (flag) {
+            flag.textContent = 'NORM';
+            flag.style.background = '#dcfce7';
+            flag.style.color = '#15803d';
+            flag.style.border = '1px solid #86efac';
+            flag.style.display = 'inline-block';
+        }
+    }
+
+    updateAbnCounter();
 }
-document.querySelectorAll('.result-input').forEach(i=>{checkAbn(i);i.addEventListener('input',()=>checkAbn(i));});
-const form=document.getElementById('resultsForm');
-const btn=document.getElementById('submitBtn');
-if(form&&btn){
-    form.addEventListener('submit',()=>{
-        setTimeout(()=>{btn.disabled=true;btn.innerHTML='<span style="width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .7s linear infinite;margin-right:7px"></span>Saving…';},80);
+
+function updateAbnCounter() {
+    const totalAbn = document.querySelectorAll('.result-row.is-abnormal').length;
+    const badge = document.getElementById('abnBadge');
+    if (badge) {
+        document.getElementById('abnCount').textContent = totalAbn;
+        badge.style.display = totalAbn > 0 ? '' : 'none';
+    }
+}
+
+document.querySelectorAll('.result-input').forEach(i => {
+    evaluateResult(i);
+    i.addEventListener('input', () => evaluateResult(i));
+});
+
+const form = document.getElementById('resultsForm');
+const btn = document.getElementById('submitBtn');
+if (form && btn) {
+    form.addEventListener('submit', () => {
+        setTimeout(() => {
+            btn.disabled = true;
+            btn.innerHTML = '<span style="width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .7s linear infinite;margin-right:7px"></span>Saving…';
+        }, 80);
     });
 }
 </script>

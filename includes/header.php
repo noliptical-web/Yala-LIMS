@@ -163,6 +163,10 @@ if ($my_role && isset($conn)) {
                         <?php endwhile; else: ?>
                             <li class="p-3 text-center text-muted small">No new notifications</li>
                         <?php endif; ?>
+                        <hr class="dropdown-divider my-1">
+                        <li class="text-center py-1">
+                            <a href="notifications.php" class="dropdown-item py-1 small fw-semibold text-primary"><i class="fa-solid fa-list me-1"></i> View All Alerts</a>
+                        </li>
                     </ul>
                 </div>
 
