@@ -188,10 +188,10 @@ if ($my_role && isset($conn)) {
                 <!-- USER INFO -->
                 <div class="text-end me-3 d-none d-md-block">
                     <span class="d-block fw-bold text-dark">
-                        <?php echo htmlspecialchars($_SESSION['full_name']); ?>
+                        <?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username'] ?? 'Staff User'); ?>
                     </span>
                     <span class="badge bg-primary rounded-pill">
-                        <?php echo htmlspecialchars($_SESSION['role']); ?>
+                        <?php echo htmlspecialchars($_SESSION['role'] ?? 'Staff'); ?>
                     </span>
                 </div>
 
