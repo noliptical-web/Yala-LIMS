@@ -198,6 +198,9 @@ table.ht td{padding:9px 16px;font-size:.82rem;vertical-align:middle}
         <span class="pbt"><?php echo $patient['age']; ?> yrs · <?php echo $patient['gender']; ?></span>
         <?php if($patient['phone_number']): ?><span class="pbt"><?php echo $patient['phone_number']; ?></span><?php endif; ?>
     </div>
+    <a href="print_routing_slip.php?patient_id=<?php echo $patient['patient_id']; ?>" target="_blank" class="btn btn-sm btn-light rounded-pill px-3 fw-bold text-primary shadow-sm" style="text-decoration:none;font-size:.78rem;display:inline-flex;align-items:center;gap:6px;white-space:nowrap">
+        <i class="fa-solid fa-print"></i> Print OPD Visit Slip
+    </a>
 </div>
 
 <div class="stats-row">

@@ -49,7 +49,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         if (!isset($s2) || !$s2) {
             $message = "DB Error: " . $conn->error; $message_type = "error";
         } elseif ($s2->execute()) {
-            audit_log($conn, 'register_patient', 'patients', $conn->insert_id, $opd.' — '.$name);
+            $new_patient_id = $conn->insert_id;
+            audit_log($conn, 'register_patient', 'patients', $new_patient_id, $opd.' — '.$name);
             $message = "Patient registered successfully."; $message_type = "success";
         } else {
             $message = "Error: " . $conn->error; $message_type = "error";
@@ -127,9 +128,16 @@ include 'includes/header.php';
 </div>
 
 <?php if ($message): ?>
-<div class="toast <?php echo $message_type; ?>">
-    <div class="tic"><i class="fa-solid <?php echo $message_type==='success'?'fa-check':'fa-xmark'; ?>"></i></div>
-    <span><?php echo htmlspecialchars($message); ?></span>
+<div class="toast <?php echo $message_type; ?>" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <div style="display:flex;align-items:center;gap:10px">
+        <div class="tic"><i class="fa-solid <?php echo $message_type==='success'?'fa-check':'fa-xmark'; ?>"></i></div>
+        <span><?php echo htmlspecialchars($message); ?></span>
+    </div>
+    <?php if(!empty($new_patient_id)): ?>
+    <a href="print_routing_slip.php?patient_id=<?php echo $new_patient_id; ?>" target="_blank" class="btn btn-sm btn-success rounded-pill px-3 fw-bold shadow-sm" style="text-decoration:none;font-size:.78rem;display:inline-flex;align-items:center;gap:6px">
+        <i class="fa-solid fa-print"></i> Print OPD Slip for Doctor
+    </a>
+    <?php endif; ?>
 </div>
 <?php endif; ?>
 
