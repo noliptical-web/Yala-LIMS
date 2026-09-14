@@ -90,7 +90,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['process_claim'])) {
                 $conn->query("UPDATE payments SET payment_method = 'Pending', payment_type = 'Cash', amount_paid = 0, insurer_amount = 0 WHERE request_id = $req_id");
                 $conn->query("UPDATE lab_requests SET payment_status = 'Unpaid' WHERE request_id = $req_id");
 
-                $alert_msg = $conn->real_escape_string("⚠️ INSURANCE CLAIM REJECTED: $pat_name (Req #$req_id) rejected by $insurer. Reason: $notes. Collect KES " . number_format($billed, 2) . " cash/M-Pesa.");
+                $alert_msg = $conn->real_escape_string("⚠️ INSURANCE CLAIM REJECTED: $pat_name (Req #$req_id) rejected by $insurer. Reason: $notes. Collect KES " . number_format($billed, 2) . " via eCitizen (Paybill 222222).");
                 $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('Receptionist', '$alert_msg', 'billing.php', 0, NOW())");
                 $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('Doctor', '$alert_msg', 'billing.php', 0, NOW())");
                 $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('Admin', '$alert_msg', 'billing.php', 0, NOW())");

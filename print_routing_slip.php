@@ -267,7 +267,7 @@ body {
         </tr>
         <tr>
             <td class="lbl">Coverage / Scheme:</td>
-            <td class="val"><?php echo htmlspecialchars($patient['insurance_provider'] ?: 'Cash Paying'); ?><?php if(!empty($patient['insurance_member_no'])) echo ' (' . htmlspecialchars($patient['insurance_member_no']) . ')'; ?></td>
+            <td class="val"><?php echo htmlspecialchars((!empty($patient['insurance_provider']) && $patient['insurance_provider'] !== 'None') ? $patient['insurance_provider'] : 'eCitizen (Paybill 222222)'); ?><?php if(!empty($patient['insurance_member_no'])) echo ' (' . htmlspecialchars($patient['insurance_member_no']) . ')'; ?></td>
         </tr>
         <tr>
             <td class="lbl">Routing Clinic:</td>
@@ -300,7 +300,7 @@ body {
 
     <div class="footer-instructions">
         Present this card to the Triage Nurse and Doctor in Consultation Room.<br>
-        The clinician will scan or enter your OPD number to order laboratory tests.
+        <strong>Cashless Facility Notice:</strong> Hospital payments are remitted strictly via <strong>eCitizen Paybill 222222</strong> (Acc: <?php echo htmlspecialchars($patient['opd_number']); ?>). Physical cash is prohibited by Law.
     </div>
 </div>
 
