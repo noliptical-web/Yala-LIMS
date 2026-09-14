@@ -5,6 +5,7 @@ require_once 'includes/db_connect.php';
 require_once 'includes/csrf.php';
 require_once 'includes/audit.php';
 require_once 'includes/sms.php';
+require_once 'includes/notifications_helper.php';
 
 if (!isset($_SESSION['loggedin']) || ($_SESSION['role'] != 'LabTech' && $_SESSION['role'] != 'Admin')) {
     header("location: dashboard.php"); exit;
@@ -95,20 +96,20 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['save_results'])) {
 
             if ($has_panic) {
                 $panic_str = implode(', ', $panic_details);
-                $notif_msg = $conn->real_escape_string("CRITICAL PANIC: $pat_name #$req_id ($panic_str) — IMMEDIATE CLINICAL ACTION NEEDED!");
-                $notif_link = $conn->real_escape_string("patient_history.php?patient_id=$pid");
-                $conn->query("INSERT INTO notifications (target_role,message,link,is_read,created_at) VALUES ('Doctor','$notif_msg','$notif_link',0,NOW())");
-                $conn->query("INSERT INTO notifications (target_role,message,link,is_read,created_at) VALUES ('Admin','$notif_msg','$notif_link',0,NOW())");
+                $notif_msg = "CRITICAL PANIC: $pat_name #$req_id ($panic_str) — IMMEDIATE CLINICAL ACTION NEEDED!";
+                $notif_link = "patient_history.php?patient_id=$pid";
+                create_notification($conn, 'Doctor', $notif_msg, $notif_link, 'Critical', 'Panic Value');
+                create_notification($conn, 'Admin',  $notif_msg, $notif_link, 'Critical', 'Panic Value');
             } else {
-                $notif_msg=$conn->real_escape_string("Results ready: $pat_name #$req_id");
-                $notif_link=$conn->real_escape_string("print_report.php?id=$req_id");
-                $req_by=$conn->real_escape_string($pat_row['requested_by']??'');
-                $dr=$conn->query("SELECT user_id FROM users WHERE full_name='$req_by' AND role='Doctor' LIMIT 1");
-                if($dr&&$dr->num_rows>0){
-                    $dr_id=$dr->fetch_assoc()['user_id'];
-                    $conn->query("INSERT INTO notifications (target_role,target_user_id,message,link,is_read,created_at) VALUES ('Doctor',$dr_id,'$notif_msg','$notif_link',0,NOW())");
+                $notif_msg = "Results ready: $pat_name #$req_id";
+                $notif_link = "print_report.php?id=$req_id";
+                $req_by = $conn->real_escape_string($pat_row['requested_by'] ?? '');
+                $dr = $conn->query("SELECT user_id FROM users WHERE full_name='$req_by' AND role='Doctor' LIMIT 1");
+                if ($dr && $dr->num_rows > 0) {
+                    $dr_id = intval($dr->fetch_assoc()['user_id']);
+                    create_notification($conn, 'Doctor', $notif_msg, $notif_link, 'Info', 'Lab Result', $dr_id);
                 } else {
-                    $conn->query("INSERT INTO notifications (target_role,message,link,is_read,created_at) VALUES ('Doctor','$notif_msg','$notif_link',0,NOW())");
+                    create_notification($conn, 'Doctor', $notif_msg, $notif_link, 'Info', 'Lab Result');
                 }
             }
 
@@ -166,10 +167,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['reject_sample'])) {
             $stmt_tr->execute();
             $stmt_tr->close();
 
-            $notif_msg = $conn->real_escape_string("⚠️ SPECIMEN REJECTED: $pat_name (Req #$req_id) - Reason: $reason. Recollection requested.");
-            $notif_link = $conn->real_escape_string("sample_rejection.php?req_id=$req_id");
-            $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('Doctor', '$notif_msg', '$notif_link', 0, NOW())");
-            $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('Admin', '$notif_msg', '$notif_link', 0, NOW())");
+            $notif_msg = "⚠️ SPECIMEN REJECTED: $pat_name (Req #$req_id) - Reason: $reason. Recollection requested.";
+            $notif_link = "sample_rejection.php?req_id=$req_id";
+            create_notification($conn, 'Doctor', $notif_msg, $notif_link, 'Warning', 'Specimen QA');
+            create_notification($conn, 'Admin',  $notif_msg, $notif_link, 'Warning', 'Specimen QA');
 
             audit_log($conn, 'reject_specimen', 'lab_requests', $req_id, "Rejected ($reason) for $pat_name");
             $conn->commit();

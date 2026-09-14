@@ -10,9 +10,8 @@ $isLabTech   = ($role === 'LabTech' || $role === 'Lab Technician' || $role === '
 $isDoctor    = ($role === 'Doctor');
 
 // Unread notifications
-$unread = 0;
-$nr = $conn->query("SELECT COUNT(*) FROM notifications WHERE is_read=0 AND (user_id=$userId OR user_id IS NULL)");
-if ($nr) $unread = $nr->fetch_row()[0];
+require_once 'includes/notifications_helper.php';
+$unread = get_unread_notifications_count($conn, $role, $userId ?: intval($_SESSION['id'] ?? 0));
 ?>
 <style>
 .nav{background:#0f172a;position:sticky;top:0;z-index:900;
@@ -77,11 +76,12 @@ if ($nr) $unread = $nr->fetch_row()[0];
   </div>
 
   <div class="nav-right">
-    <?php if($unread > 0): ?>
-    <button class="notif-btn" onclick="window.location='notifications.php'" title="Notifications">
-      🔔<span class="notif-badge"><?=$unread?></span>
+    <button class="notif-btn" onclick="window.location='notifications.php'" title="Notifications (<?= $unread ?> unread)">
+      <i class="fa-solid fa-bell"></i>
+      <?php if($unread > 0): ?>
+      <span class="notif-badge"><?=$unread?></span>
+      <?php endif; ?>
     </button>
-    <?php endif; ?>
     <div class="avatar" title="<?=htmlspecialchars($fullName)?>"><?=htmlspecialchars($initials)?></div>
     <span class="role-chip"><?=htmlspecialchars($role)?></span>
     <a href="logout.php" class="logout-btn">Logout</a>

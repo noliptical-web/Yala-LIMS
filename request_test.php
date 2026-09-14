@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once 'includes/db_connect.php';
+require_once 'includes/notifications_helper.php';
 if (!isset($_SESSION['loggedin']) || ($_SESSION['role'] !== 'Doctor' && $_SESSION['role'] !== 'Admin')) {
     header("location: dashboard.php");
     exit;
@@ -84,9 +85,9 @@ if ($_SERVER["REQUEST_METHOD"]=="POST"&&isset($_POST['submit_order'])) {
                     }
                 }
 
-                $pn=$conn->real_escape_string($patient['full_name']??"#$patient_id");
-                $conn->query("INSERT INTO notifications (target_role,message,link,is_read,created_at) VALUES ('LabTech','".addslashes("New Order: Req #$rid for $pn")."','enter_results.php?manage_id=$rid',0,NOW())");
-                $success="Request #$rid submitted — Lab Tech notified.";
+                $pn = $patient['full_name'] ?? "#$patient_id";
+                create_notification($conn, 'LabTech', "New Order: Req #$rid for $pn", "enter_results.php?manage_id=$rid", 'Info', 'Lab Order');
+                $success = "Request #$rid submitted — Lab Tech notified.";
             } else { $error="DB Error: ".$stmt->error; }
             $stmt->close();
         }

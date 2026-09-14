@@ -5,6 +5,7 @@ session_start();
 require_once 'includes/db_connect.php';
 require_once 'includes/csrf.php';
 require_once 'includes/audit.php';
+require_once 'includes/notifications_helper.php';
 
 if (!isset($_SESSION['loggedin'])) {
     header("location: index.php"); exit;
@@ -40,6 +41,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_qc_log'])) {
         $stmt->bind_param("ssssssss", $equip, $param, $expRange, $val, $status, $my_user, $action, $logDate);
         if ($stmt->execute()) {
             audit_log($conn, 'add_qc_log', 'qc_equipment_logs', $conn->insert_id, "$equip ($param = $val: $status)");
+
+            if ($status !== 'Compliant') {
+                create_notification($conn, 'LabTech', "⚠️ QC ALERT: $equip $param ($val) is $status (Range: $expRange). Corrective Action: $action", 'qc_log.php', 'Warning', 'QC & Calibration');
+                create_notification($conn, 'Admin',   "⚠️ QC ALERT: $equip $param ($val) is $status (Range: $expRange).", 'qc_log.php', 'Warning', 'QC & Calibration');
+            }
+
             $success = "QC record for '$equip' logged successfully.";
         } else {
             $error = "Error saving QC log: " . $conn->error;

@@ -9,6 +9,7 @@ require_once 'includes/db_connect.php';
 require_once 'includes/csrf.php';
 require_once 'includes/audit.php';
 require_once 'includes/sms.php';
+require_once 'includes/notifications_helper.php';
 
 $allowed = ['Receptionist', 'Admin'];
 if (!isset($_SESSION['loggedin']) || !in_array($_SESSION['role'], $allowed)) {
@@ -151,10 +152,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['record_payment'])) {
             $conn->query("UPDATE lab_requests SET payment_status = 'Paid' WHERE request_id = $requestId");
 
             // 4. Dispatch notification to Lab Technologists & Ordering Doctor
-            $notif_msg = $conn->real_escape_string("eCitizen Clearance: Req #$requestId ($pat_name) — KES " . number_format($actual_amount, 2) . " settled via $pay_method (Ref: $ref). Tests ready for specimen analysis.");
-            $notif_link = $conn->real_escape_string("enter_results.php?manage_id=$requestId");
-            $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('LabTech', '$notif_msg', '$notif_link', 0, NOW())");
-            $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('Doctor', '$notif_msg', 'patient_history.php?patient_id=$pat_id', 0, NOW())");
+            $notif_msg = "eCitizen Clearance: Req #$requestId ($pat_name) — KES " . number_format($actual_amount, 2) . " settled via $pay_method (Ref: $ref). Tests ready for specimen analysis.";
+            create_notification($conn, 'LabTech', $notif_msg, "enter_results.php?manage_id=$requestId", 'Success', 'Billing');
+            create_notification($conn, 'Doctor',  $notif_msg, "patient_history.php?patient_id=$pat_id", 'Success', 'Billing');
 
             // 5. Audit Log (PFM Act Revenue Compliance)
             audit_log($conn, 'record_payment_ecitizen', 'payments', $paymentId, "Cleared Req #$requestId for $pat_name via $pay_method ($ref) KES $actual_amount");

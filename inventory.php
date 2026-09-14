@@ -5,6 +5,7 @@ session_start();
 require_once 'includes/db_connect.php';
 require_once 'includes/csrf.php';
 require_once 'includes/audit.php';
+require_once 'includes/notifications_helper.php';
 
 if (!isset($_SESSION['loggedin'])) {
     header("location: index.php"); exit;
@@ -84,6 +85,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['adjust_stock'])) {
             if ($upd->execute()) {
                 $act_label = $delta > 0 ? "Restocked +$delta" : "Dispensed $delta";
                 audit_log($conn, 'adjust_inventory', 'lab_inventory', $itemId, "$act_label for {$item['item_name']} (New Qty: $newQty)");
+
+                if ($newQty <= $item['reorder_level']) {
+                    create_notification($conn, 'LabTech', "⚠️ LOW STOCK ALERT: {$item['item_name']} has reached reorder level ($newQty remaining). Reorder required.", 'inventory.php', 'Warning', 'Inventory');
+                    create_notification($conn, 'Admin',   "⚠️ LOW STOCK ALERT: {$item['item_name']} has reached reorder level ($newQty remaining). Reorder required.", 'inventory.php', 'Warning', 'Inventory');
+                }
+
                 $success = "Stock updated for {$item['item_name']}. New balance: $newQty";
             } else {
                 $error = "Update failed: " . $conn->error;

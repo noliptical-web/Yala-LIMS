@@ -5,6 +5,7 @@ session_start();
 require_once 'includes/db_connect.php';
 require_once 'includes/csrf.php';
 require_once 'includes/audit.php';
+require_once 'includes/notifications_helper.php';
 
 if (!isset($_SESSION['loggedin'])) {
     header("location: index.php"); exit;
@@ -69,6 +70,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['record_crossmatch']))
             $newStatus = ($result === 'Compatible') ? ($markTransfused ? 'Transfused' : 'Reserved') : 'Available';
             $conn->query("UPDATE blood_inventory SET status = '$newStatus' WHERE bag_id = $bagId");
             audit_log($conn, 'crossmatch_blood', 'blood_crossmatches', $conn->insert_id, "Bag #$bagId to Patient #$patId ($result - $newStatus)");
+
+            // Clinical blood bank alerts
+            $b_info = $conn->query("SELECT bag_number, blood_group FROM blood_inventory WHERE bag_id = $bagId")->fetch_assoc();
+            $p_info = $conn->query("SELECT full_name, opd_number FROM patients WHERE patient_id = $patId")->fetch_assoc();
+            $bagNum = $b_info['bag_number'] ?? "Bag #$bagId";
+            $bGrp   = $b_info['blood_group'] ?? "";
+            $pName  = $p_info['full_name'] ?? "Patient #$patId";
+
+            if ($result === 'Incompatible') {
+                create_notification($conn, 'Doctor', "🚨 BLOOD INCOMPATIBLE: Unit $bagNum ($bGrp) is INCOMPATIBLE with $pName. DO NOT TRANSFUSE!", "blood_bank.php", 'Critical', 'Blood Bank');
+                create_notification($conn, 'Admin',  "🚨 BLOOD INCOMPATIBLE: Unit $bagNum ($bGrp) is INCOMPATIBLE with $pName.", "blood_bank.php", 'Critical', 'Blood Bank');
+            } else {
+                create_notification($conn, 'Doctor', "Blood Crossmatch COMPATIBLE: Unit $bagNum ($bGrp) prepared for $pName ($docName). Status: $newStatus.", "blood_bank.php", 'Success', 'Blood Bank');
+            }
+
             $success = "Crossmatch recorded ($result). Unit status set to $newStatus.";
         } else {
             $error = "Crossmatch failed: " . $conn->error;

@@ -5,6 +5,7 @@ session_start();
 require_once 'includes/db_connect.php';
 require_once 'includes/csrf.php';
 require_once 'includes/audit.php';
+require_once 'includes/notifications_helper.php';
 
 if (!isset($_SESSION['loggedin'])) {
     header("location: index.php"); exit;
@@ -54,10 +55,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['log_rejection'])) {
                     $conn->query("UPDATE test_results SET result_value = 'REJECTED: " . $conn->real_escape_string($reason) . "', technician_remarks = '" . $conn->real_escape_string($comments) . "' WHERE request_id = $req_id");
 
                     // Clinical notification
-                    $notif_msg = $conn->real_escape_string("⚠️ SPECIMEN REJECTED: $pat_name (Req #$req_id) - Reason: $reason. Recollection requested.");
-                    $notif_link = $conn->real_escape_string("sample_rejection.php?req_id=$req_id");
-                    $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('Doctor', '$notif_msg', '$notif_link', 0, NOW())");
-                    $conn->query("INSERT INTO notifications (target_role, message, link, is_read, created_at) VALUES ('Admin', '$notif_msg', '$notif_link', 0, NOW())");
+                    $notif_msg = "⚠️ SPECIMEN REJECTED: $pat_name (Req #$req_id) - Reason: $reason. Recollection requested.";
+                    $notif_link = "sample_rejection.php?req_id=$req_id";
+                    create_notification($conn, 'Doctor', $notif_msg, $notif_link, 'Warning', 'Specimen QA');
+                    create_notification($conn, 'Admin',  $notif_msg, $notif_link, 'Warning', 'Specimen QA');
 
                     audit_log($conn, 'reject_specimen', 'lab_requests', $req_id, "Specimen rejected: $reason for $pat_name");
                     $conn->commit();
@@ -88,6 +89,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_recollected'])) 
                 $conn->query("UPDATE sample_rejections SET status = 'Recollected' WHERE rejection_id = $rej_id");
                 $conn->query("UPDATE lab_requests SET status = 'In Progress' WHERE request_id = $req_id");
                 $conn->query("UPDATE test_results SET result_value = 'Pending', technician_remarks = 'Recollection specimen received; undergoing testing' WHERE request_id = $req_id");
+                
+                $pn_res = $conn->query("SELECT p.full_name FROM lab_requests r JOIN patients p ON r.patient_id=p.patient_id WHERE r.request_id = $req_id");
+                $pname_str = ($pn_res && $prow = $pn_res->fetch_assoc()) ? $prow['full_name'] : "Patient";
+                create_notification($conn, 'Doctor', "Redraw Received: Req #$req_id ($pname_str) replacement specimen received at lab bench.", "enter_results.php?manage_id=$req_id", 'Info', 'Specimen QA');
 
                 audit_log($conn, 'sample_recollected', 'sample_rejections', $rej_id, "Redraw received for Request #$req_id");
                 $conn->commit();
