@@ -61,6 +61,15 @@ if ($_SERVER["REQUEST_METHOD"]=="POST"&&isset($_POST['submit_order'])) {
                         $sp2->bind_param("idsss", $rid, $total_cost, $ins_provider, $ins_member, $doctor_name);
                         $sp2->execute(); $sp2->close();
                     }
+                    // Auto-generate claim entry in insurance_claims
+                    $cl_prefix = strtoupper(substr(preg_replace('/[^a-zA-Z]/', '', $ins_provider), 0, 4)) ?: 'SHA';
+                    $auto_ref = "CLM-$cl_prefix-" . date('Y') . "-$rid";
+                    $stmt_claim = $conn->prepare("INSERT INTO insurance_claims (request_id, patient_id, insurer_name, insurance_number, claim_ref, billed_amount, approved_amount, copay_amount, status, notes) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'Submitted', 'Pre-authorization auto-logged upon clinician CPOE order.')");
+                    if ($stmt_claim) {
+                        $stmt_claim->bind_param("iisssd", $rid, $patient_id, $ins_provider, $ins_member, $auto_ref, $total_cost);
+                        $stmt_claim->execute();
+                        $stmt_claim->close();
+                    }
                     // Insurance patients can proceed immediately (workbench checks if patient has insurance_provider)
                 } else {
                     $sp2 = $conn->prepare(

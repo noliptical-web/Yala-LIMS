@@ -79,3 +79,25 @@ function sms_results_ready(mysqli $conn, int $request_id): void {
 
     send_sms($conn, $request_id, $row['phone_number'], $msg);
 }
+
+function sms_payment_receipt(mysqli $conn, int $request_id, float $amount, string $method, string $ref): void {
+    $stmt = $conn->prepare(
+        "SELECT p.full_name, p.phone_number, p.opd_number
+         FROM lab_requests r
+         JOIN patients p ON r.patient_id = p.patient_id
+         WHERE r.request_id = ?"
+    );
+    $stmt->bind_param("i", $request_id);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$row || empty($row['phone_number'])) return;
+
+    $name = $row['full_name'];
+    $opd  = $row['opd_number'];
+    $amt_fmt = number_format($amount, 2);
+    $msg = "Dear $name, payment of KES $amt_fmt via $method (Ref: $ref) received at Yala Sub-County Hospital for Lab Req #$request_id (OPD $opd). Receipt cleared.";
+
+    send_sms($conn, $request_id, $row['phone_number'], $msg);
+}

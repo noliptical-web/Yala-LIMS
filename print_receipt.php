@@ -51,17 +51,20 @@ addRow($pdf,'Patient:',   $meta['full_name']);
 addRow($pdf,'OPD No:',    $meta['opd_number']);
 
 // Payment method line
-$method = $meta['payment_method'];
-if ($method === 'Insurance') {
-    addRow($pdf,'Payment:',   'Insurance — '.$meta['insurance_provider']);
-    addRow($pdf,'Member No:', $meta['insurance_member_no']);
-    if ($meta['insurance_claim_no']) addRow($pdf,'Claim No:', $meta['insurance_claim_no']);
-} elseif ($method === 'Waiver') {
+$method = trim($meta['payment_method'] ?? 'Cash');
+$m_lower = strtolower($method);
+
+if ($m_lower === 'insurance') {
+    addRow($pdf,'Payment:',   'Insurance — '.($meta['insurance_provider'] ?: 'Scheme'));
+    addRow($pdf,'Member No:', $meta['insurance_member_no'] ?: 'N/A');
+    $cl_no = $meta['insurance_claim_no'] ?: $meta['reference_no'];
+    if ($cl_no) addRow($pdf,'Claim Ref:', $cl_no);
+} elseif ($m_lower === 'waiver') {
     addRow($pdf,'Payment:',  'WAIVER — '.$meta['waiver_reason']);
-} elseif ($method === 'Cash') {
+} elseif ($m_lower === 'cash') {
     addRow($pdf,'Payment:', 'Cash — Ref: '.($meta['reference_no']?:'N/A'));
 } else {
-    addRow($pdf,'Payment:', 'M-Pesa ('.$meta['reference_no'].')');
+    addRow($pdf,'Payment:', 'M-Pesa ('.($meta['reference_no']?:'Confirmed').')');
 }
 if ($meta['received_by']) addRow($pdf,'Received by:', $meta['received_by']);
 
@@ -77,7 +80,7 @@ $pdf->SetFont('Arial','',10);
 $total = 0;
 while ($row = $items->fetch_assoc()) {
     $pdf->Cell(85,7,$row['test_name'],0,0);
-    $cost = ($method === 'Waiver') ? 0 : $row['cost'];
+    $cost = ($m_lower === 'waiver') ? 0 : floatval($row['cost']);
     $pdf->Cell(35,7,number_format($cost,2),0,1,'R');
     $total += $cost;
 }
@@ -86,18 +89,29 @@ $pdf->Ln(2);
 $pdf->Line(10,$pdf->GetY(),138,$pdf->GetY());
 $pdf->Ln(2);
 
-$pdf->SetFont('Arial','B',12);
-$pdf->Cell(85,8,'TOTAL PAID:',0,0);
-$paid = ($method === 'Waiver') ? 0 : $meta['amount_paid'];
-$pdf->Cell(35,8,'Ksh '.number_format($paid,2),0,1,'R');
+$pdf->SetFont('Arial','B',11);
+$pdf->Cell(85,8,'TOTAL BILLED:',0,0);
+$pdf->Cell(35,8,'Ksh '.number_format($total,2),0,1,'R');
 
-if ($method === 'Insurance') {
+if ($m_lower === 'insurance') {
+    $copay_val = floatval($meta['copay_amount'] ?? 0);
+    $ins_val = max(0, $total - $copay_val);
+    $pdf->SetFont('Arial','',9);
+    if ($copay_val > 0) {
+        $pdf->Cell(85,6,'Patient Copay Paid:',0,0);
+        $pdf->Cell(35,6,'Ksh '.number_format($copay_val,2),0,1,'R');
+    }
+    $pdf->Cell(85,6,'Billed to '.($meta['insurance_provider']?:'Insurer').':',0,0);
+    $pdf->Cell(35,6,'Ksh '.number_format($ins_val,2),0,1,'R');
+    $pdf->SetFont('Arial','I',8);
+    $pdf->Cell(0,5,'* Claim submitted under MOH / SHA pre-authorization protocol',0,1,'C');
+} elseif ($m_lower === 'waiver') {
     $pdf->SetFont('Arial','I',9);
-    $pdf->Cell(0,5,'* Balance to be claimed from '.$meta['insurance_provider'],0,1,'C');
-}
-if ($method === 'Waiver') {
-    $pdf->SetFont('Arial','I',9);
-    $pdf->Cell(0,5,'* Fee waived. Authorised by: '.$meta['received_by'],0,1,'C');
+    $pdf->Cell(0,5,'* Fee fully waived. Authorized by: '.($meta['received_by']?:'Medical Superintendent'),0,1,'C');
+} else {
+    $pdf->SetFont('Arial','B',11);
+    $pdf->Cell(85,7,'AMOUNT PAID:',0,0);
+    $pdf->Cell(35,7,'Ksh '.number_format(floatval($meta['amount_paid']),2),0,1,'R');
 }
 
 $pdf->Ln(8);
